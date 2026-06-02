@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from discord.ui import View, Button
+from discord.ui import View
 import re
 import os
 import json
@@ -40,7 +40,7 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ===== ID ВЛАДЕЛЬЦА БОТА =====
-OWNER_ID = 920268444983775252 
+OWNER_ID = 920268444983775252  
 
 def is_owner(interaction: discord.Interaction) -> bool:
     return interaction.user.id == OWNER_ID
@@ -68,7 +68,7 @@ class PremiumDurationView(View):
     async def premium_180(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process_payment(interaction, 180, 330)
     
-    @discord.ui.button(label="365 дней - 660 ₽", style=discord.ButtonStyle.gold, emoji="👑", row=2)
+    @discord.ui.button(label="365 дней - 660 ₽", style=discord.ButtonStyle.blurple, emoji="👑", row=2)
     async def premium_365(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process_payment(interaction, 365, 660)
     
@@ -177,7 +177,7 @@ def get_premium_expiry(user_id: str) -> str:
 
 def get_remaining_free_requests(user_id: str) -> int:
     used = get_user_requests(user_id)
-    return max(0, 5 - used)  # 5 пробных запросов
+    return max(0, 5 - used)
 
 # ========== БАЗА УК ==========
 uk_sections = {
