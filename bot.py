@@ -478,7 +478,7 @@ async def buy_premium(interaction: discord.Interaction):
             "• Безлимитные запросы к боту\n"
             "• Приоритетная поддержка\n\n"
             "💳 **Как оплатить:**\n"
-            "1. Перейдите по ссылке: [DonationAlerts](https://www.donationalerts.com/r/ваш_никнейм)\n"
+            "1. Перейдите по ссылке: [DonationAlerts](https://www.donationalerts.com/r/wilka_wilkovich)\n"
             "2. Выберите сумму **60 ₽**\n"
             "3. В комментарии укажите: `!премиум {user_id}`\n"
             "4. После оплаты бот автоматически выдаст премиум на 30 дней!\n\n"
