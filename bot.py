@@ -45,9 +45,158 @@ OWNER_ID = 920268444983775252  # ⚠️ ЗАМЕНИТЕ НА ВАШ DISCORD ID!
 def is_owner(interaction: discord.Interaction) -> bool:
     return interaction.user.id == OWNER_ID
 
+# ========== СИСТЕМА ПОДПИСКИ С ПАМЯТЬЮ ==========
+DATA_FILE = "premium_users.json"
+
+def load_data():
+    """Загружает данные из файла (память после перезапуска)"""
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+def save_data(data):
+    """Сохраняет данные в файл"""
+    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+def cleanup_expired():
+    """Удаляет истекшие подписки (запускается при проверке)"""
+    data = load_data()
+    changed = False
+    now = datetime.now()
+    
+    for user_id, info in list(data.items()):
+        premium_until = info.get("premium_until")
+        if premium_until:
+            expire_date = datetime.fromisoformat(premium_until)
+            if expire_date <= now:
+                data[user_id]["premium_until"] = None
+                changed = True
+                print(f"⏰ Подписка пользователя {user_id} истекла {expire_date.strftime('%Y-%m-%d')}")
+    
+    if changed:
+        save_data(data)
+
+def get_user_requests(user_id: str) -> int:
+    data = load_data()
+    current_month = datetime.now().strftime("%Y-%m")
+    
+    if user_id not in data:
+        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None}
+    
+    if data[user_id].get("month") != current_month:
+        data[user_id]["requests"] = 0
+        data[user_id]["month"] = current_month
+    
+    save_data(data)
+    return data[user_id]["requests"]
+
+def increment_requests(user_id: str) -> int:
+    data = load_data()
+    current_month = datetime.now().strftime("%Y-%m")
+    
+    if user_id not in data:
+        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None}
+    
+    if data[user_id].get("month") != current_month:
+        data[user_id]["requests"] = 0
+        data[user_id]["month"] = current_month
+    
+    data[user_id]["requests"] += 1
+    save_data(data)
+    return data[user_id]["requests"]
+
+def is_premium(user_id: str) -> bool:
+    cleanup_expired()  # Проверяем истекшие подписки при каждом запросе
+    data = load_data()
+    if user_id not in data:
+        return False
+    
+    premium_until = data[user_id].get("premium_until")
+    if not premium_until:
+        return False
+    
+    expire_date = datetime.fromisoformat(premium_until)
+    return expire_date > datetime.now()
+
+def add_premium(user_id: str, days: int):
+    """Добавляет или продлевает подписку (сохраняется в файл)"""
+    data = load_data()
+    current_month = datetime.now().strftime("%Y-%m")
+    
+    if user_id not in data:
+        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None}
+    
+    current_expiry = data[user_id].get("premium_until")
+    if current_expiry:
+        new_expiry = datetime.fromisoformat(current_expiry) + timedelta(days=days)
+    else:
+        new_expiry = datetime.now() + timedelta(days=days)
+    
+    data[user_id]["premium_until"] = new_expiry.isoformat()
+    save_data(data)
+    print(f"💎 Премиум выдан/продлён {user_id} на {days} дней до {new_expiry.strftime('%Y-%m-%d')}")
+    return new_expiry
+
+def get_premium_expiry(user_id: str) -> str:
+    data = load_data()
+    if user_id not in data:
+        return None
+    return data[user_id].get("premium_until")
+
+def get_remaining_free_requests(user_id: str) -> int:
+    used = get_user_requests(user_id)
+    return max(0, 5 - used)
+
+def get_all_premium_users() -> list:
+    """Возвращает список всех пользователей с АКТИВНОЙ подпиской"""
+    cleanup_expired()
+    data = load_data()
+    premium_list = []
+    now = datetime.now()
+    
+    for user_id, info in data.items():
+        premium_until = info.get("premium_until")
+        if premium_until:
+            expire_date = datetime.fromisoformat(premium_until)
+            if expire_date > now:
+                premium_list.append({
+                    "id": user_id,
+                    "expires": premium_until,
+                    "expires_date": expire_date
+                })
+    
+    # Сортируем по дате истечения (скоро истекающие — первые)
+    premium_list.sort(key=lambda x: x["expires_date"])
+    return premium_list
+
+def get_premium_stats() -> dict:
+    """Возвращает статистику по подпискам"""
+    data = load_data()
+    total_users = len(data)
+    active_premium = 0
+    total_requests = 0
+    current_month = datetime.now().strftime("%Y-%m")
+    now = datetime.now()
+    
+    for user_id, info in data.items():
+        total_requests += info.get("requests", 0)
+        premium_until = info.get("premium_until")
+        if premium_until:
+            expire_date = datetime.fromisoformat(premium_until)
+            if expire_date > now:
+                active_premium += 1
+    
+    return {
+        "total_users": total_users,
+        "active_premium": active_premium,
+        "total_requests_month": total_requests,
+        "month": current_month
+    }
+
 # ========== КНОПКИ ВЫБОРА СРОКА ПОДПИСКИ ==========
 class PremiumDurationView(View):
-    """Кнопки выбора срока подписки"""
     def __init__(self, user_id: str):
         super().__init__(timeout=120)
         self.user_id = user_id
@@ -92,92 +241,6 @@ class PremiumDurationView(View):
             color=discord.Color.gold()
         )
         await interaction.response.edit_message(content=None, embed=embed, view=None)
-
-# ========== СИСТЕМА ПОДПИСКИ (5 пробных запросов в месяц) ==========
-DATA_FILE = "premium_users.json"
-
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {}
-
-def save_data(data):
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-
-def get_user_requests(user_id: str) -> int:
-    data = load_data()
-    current_month = datetime.now().strftime("%Y-%m")
-    
-    if user_id not in data:
-        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None}
-    
-    if data[user_id].get("month") != current_month:
-        data[user_id]["requests"] = 0
-        data[user_id]["month"] = current_month
-    
-    save_data(data)
-    return data[user_id]["requests"]
-
-def increment_requests(user_id: str) -> int:
-    data = load_data()
-    current_month = datetime.now().strftime("%Y-%m")
-    
-    if user_id not in data:
-        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None}
-    
-    if data[user_id].get("month") != current_month:
-        data[user_id]["requests"] = 0
-        data[user_id]["month"] = current_month
-    
-    data[user_id]["requests"] += 1
-    save_data(data)
-    return data[user_id]["requests"]
-
-def is_premium(user_id: str) -> bool:
-    data = load_data()
-    if user_id not in data:
-        return False
-    
-    premium_until = data[user_id].get("premium_until")
-    if not premium_until:
-        return False
-    
-    expire_date = datetime.fromisoformat(premium_until)
-    if expire_date <= datetime.now():
-        data[user_id]["premium_until"] = None
-        save_data(data)
-        return False
-    
-    return True
-
-def add_premium(user_id: str, days: int):
-    data = load_data()
-    current_month = datetime.now().strftime("%Y-%m")
-    
-    if user_id not in data:
-        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None}
-    
-    current_expiry = data[user_id].get("premium_until")
-    if current_expiry:
-        new_expiry = datetime.fromisoformat(current_expiry) + timedelta(days=days)
-    else:
-        new_expiry = datetime.now() + timedelta(days=days)
-    
-    data[user_id]["premium_until"] = new_expiry.isoformat()
-    save_data(data)
-    print(f"💎 Премиум выдан {user_id} на {days} дней до {new_expiry.strftime('%Y-%m-%d')}")
-
-def get_premium_expiry(user_id: str) -> str:
-    data = load_data()
-    if user_id not in data:
-        return None
-    return data[user_id].get("premium_until")
-
-def get_remaining_free_requests(user_id: str) -> int:
-    used = get_user_requests(user_id)
-    return max(0, 5 - used)
 
 # ========== БАЗА УК ==========
 uk_sections = {
@@ -304,10 +367,24 @@ def smart_search(query: str, database: list):
 # ========== СОБЫТИЕ ==========
 @bot.event
 async def on_ready():
+    # Очищаем истекшие подписки при запуске
+    cleanup_expired()
+    
+    stats = get_premium_stats()
+    premium_users = get_all_premium_users()
+    
     print(f"✅ Бот {bot.user} готов!")
     print(f"📜 УК: {len(uk_laws)} статей | ПК: {len(pk_laws)} статей")
     print(f"💎 Бесплатно: 5 пробных запросов в месяц | Премиум: от 55 ₽")
     print(f"👑 Владелец бота: {OWNER_ID}")
+    print(f"📊 Статистика: {stats['total_users']} пользователей, {stats['active_premium']} активных подписок")
+    print(f"💎 Активных премиум-подписок: {len(premium_users)}")
+    
+    for pu in premium_users[:5]:
+        print(f"   - {pu['id']} до {pu['expires'][:10]}")
+    
+    if len(premium_users) > 5:
+        print(f"   ... и ещё {len(premium_users) - 5}")
     
     try:
         synced = await bot.tree.sync()
@@ -395,9 +472,88 @@ async def give_premium(interaction: discord.Interaction, user: discord.User, day
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     
-    add_premium(str(user.id), days)
-    embed = discord.Embed(title="✅ Премиум выдан!", description=f"{user.mention} получил премиум на **{days}** дней.", color=discord.Color.green())
+    new_expiry = add_premium(str(user.id), days)
+    embed = discord.Embed(
+        title="✅ Премиум выдан!",
+        description=f"{user.mention} получил премиум на **{days}** дней.\n📅 Действует до: {new_expiry.strftime('%Y-%m-%d')}",
+        color=discord.Color.green()
+    )
     await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="premium_list", description="[АДМИН] Показать список активных премиум-подписок")
+async def premium_list(interaction: discord.Interaction):
+    if not (is_owner(interaction) or interaction.user.guild_permissions.administrator):
+        embed = discord.Embed(title="❌ Нет прав!", description="Команда только для администраторов.", color=discord.Color.red())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    premium_users = get_all_premium_users()
+    
+    if not premium_users:
+        embed = discord.Embed(
+            title="💎 Активные премиум-подписки",
+            description="Нет активных подписок.",
+            color=discord.Color.orange()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    embed = discord.Embed(
+        title=f"💎 Активные премиум-подписки ({len(premium_users)})",
+        color=discord.Color.green(),
+        timestamp=datetime.now()
+    )
+    
+    for pu in premium_users[:20]:  # Максимум 20 записей в одном сообщении
+        try:
+            user = await bot.fetch_user(int(pu["id"]))
+            name = user.name
+        except:
+            name = f"ID: {pu['id']}"
+        
+        expire_date = pu["expires_date"]
+        days_left = (expire_date - datetime.now()).days
+        
+        embed.add_field(
+            name=f"👤 {name}",
+            value=f"📅 До: {expire_date.strftime('%d.%m.%Y')}\n⏰ Осталось: {days_left} дней\n🆔 `{pu['id']}`",
+            inline=False
+        )
+    
+    if len(premium_users) > 20:
+        embed.set_footer(text=f"И ещё {len(premium_users) - 20} подписок... Используйте /premium_stats для полной статистики")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="premium_stats", description="[АДМИН] Показать статистику по подпискам")
+async def premium_stats(interaction: discord.Interaction):
+    if not (is_owner(interaction) or interaction.user.guild_permissions.administrator):
+        embed = discord.Embed(title="❌ Нет прав!", color=discord.Color.red())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    stats = get_premium_stats()
+    premium_users = get_all_premium_users()
+    
+    # Считаем общее количество использованных запросов за месяц
+    total_requests = 0
+    data = load_data()
+    current_month = datetime.now().strftime("%Y-%m")
+    for user_id, info in data.items():
+        if info.get("month") == current_month:
+            total_requests += info.get("requests", 0)
+    
+    embed = discord.Embed(
+        title="📊 Статистика подписок",
+        color=discord.Color.blue(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="👥 Всего пользователей", value=str(stats['total_users']), inline=True)
+    embed.add_field(name="💎 Активных подписок", value=str(stats['active_premium']), inline=True)
+    embed.add_field(name="📝 Запросов в месяце", value=str(total_requests), inline=True)
+    embed.add_field(name="📅 Текущий месяц", value=stats['month'], inline=True)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="premium_status", description="Проверить статус подписки")
 async def premium_status(interaction: discord.Interaction):
@@ -408,9 +564,11 @@ async def premium_status(interaction: discord.Interaction):
     
     if premium:
         expire = get_premium_expiry(user_id)
+        expire_date = datetime.fromisoformat(expire)
+        days_left = (expire_date - datetime.now()).days
         embed = discord.Embed(
             title="💎 Статус подписки",
-            description=f"✅ Премиум **активен**\n📅 Действует до: {expire[:10]}\n📊 Пробных запросов: {used}/5",
+            description=f"✅ Премиум **активен**\n📅 Действует до: {expire_date.strftime('%d.%m.%Y')}\n⏰ Осталось: {days_left} дней\n📊 Пробных запросов: {used}/5",
             color=discord.Color.green()
         )
     else:
@@ -556,15 +714,17 @@ async def help_slash(interaction: discord.Interaction):
     embed.add_field(name="🤖 ИИ", value="`/вопрос Твой вопрос`", inline=False)
     embed.add_field(name="📚 Разделы", value="`/разделы_ук`, `/разделы_пк`", inline=False)
     embed.add_field(name="💎 Подписка", value="`/купить`, `/активировать`, `/premium_status`, `/инфо`", inline=False)
+    embed.add_field(name="📊 Админ", value="`/premium_list`, `/premium_stats`, `/give_premium`", inline=False)
     embed.add_field(name="🆘 Поддержка", value="`/поддержка Твой вопрос`", inline=False)
-    embed.add_field(name="👑 Админ", value="`/give_premium @user 30`", inline=False)
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="инфо", description="Информация о боте")
 async def info_slash(interaction: discord.Interaction):
+    stats = get_premium_stats()
     embed = discord.Embed(title="📚 Юридический помощник Majestic RP", color=discord.Color.gold())
     embed.add_field(name="💎 Бесплатно", value="5 пробных запросов в месяц", inline=False)
     embed.add_field(name="💰 Премиум", value="30 дней — 55 ₽ | 60 дней — 110 ₽ | 90 дней — 165 ₽ | 180 дней — 330 ₽ | 365 дней — 660 ₽", inline=False)
+    embed.add_field(name="📊 Статистика", value=f"👥 Пользователей: {stats['total_users']}\n💎 Активных подписок: {stats['active_premium']}", inline=False)
     embed.add_field(name="🔗 Команды", value="`/купить`, `/premium_status`, `/справка`", inline=False)
     await interaction.response.send_message(embed=embed)
 
