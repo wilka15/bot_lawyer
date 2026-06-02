@@ -4,14 +4,12 @@ from discord import app_commands
 import re
 import os
 import json
-import hashlib
-import hmac
+import asyncio
 from datetime import datetime, timedelta
 from difflib import get_close_matches
 from threading import Thread
 from flask import Flask, request, jsonify
 import google.generativeai as genai
-import requests
 
 # ===== ВЕБ-СЕРВЕР ДЛЯ RENDER И ПЛАТЕЖЕЙ =====
 app = Flask(__name__)
@@ -20,45 +18,34 @@ app = Flask(__name__)
 def health_check():
     return "✅ Bot is alive!", 200
 
-# Эндпоинт для вебхука от DonationAlerts
 @app.route('/webhook/donationalerts', methods=['POST'])
 def donationalerts_webhook():
-    """Обработка платежей с DonationAlerts"""
-    # Получаем данные
     data = request.json
-    
-    # Проверяем подпись (для безопасности)
     signature = request.headers.get('Authorization', '').replace('Bearer ', '')
+    
     if signature != os.environ.get("DONATIONALERTS_SECRET"):
         return jsonify({"status": "unauthorized"}), 401
     
-    # Проверяем, что это успешная оплата
     if data.get('event_type') == 'donation':
         amount = float(data.get('data', {}).get('amount', 0))
         username = data.get('data', {}).get('username', '')
         message = data.get('data', {}).get('message', '')
         
-        # Проверяем сумму (60 ₽ или больше)
         if amount >= 60:
-            # Из сообщения пытаемся достать Discord ID
-            # Пример сообщения: "!премиум 123456789012345678"
-            discord_id = None
-            if message.startswith('!премиум'):
-                parts = message.split()
-                if len(parts) > 1 and parts[1].isdigit():
-                    discord_id = parts[1]
-            
-            if discord_id:
-                # Выдаём премиум на 30 дней
+            # Из сообщения достаём Discord ID
+            import re
+            match = re.search(r'!премиум\s+(\d{17,19})', message)
+            if match:
+                discord_id = match.group(1)
                 add_premium(discord_id, 30)
-                print(f"✅ Выдан премиум пользователю {discord_id} на 30 дней (оплата {amount} ₽)")
+                print(f"✅ Выдан премиум {discord_id} на 30 дней")
                 
-                # Отправляем уведомление в Discord
+                # Отправляем уведомление в Discord (если есть канал)
                 channel_id = os.environ.get("DISCORD_LOG_CHANNEL")
                 if channel_id:
                     channel = bot.get_channel(int(channel_id))
                     if channel:
-                        asyncio.create_task(channel.send(f"💎 Пользователь <@{discord_id}> приобрёл премиум на 30 дней! Спасибо за поддержку!"))
+                        asyncio.create_task(channel.send(f"💎 Пользователь <@{discord_id}> приобрёл премиум на 30 дней!"))
                 
                 return jsonify({"status": "ok"}), 200
     
@@ -83,7 +70,7 @@ model = genai.GenerativeModel('gemini-2.0-flash')
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ========== СИСТЕМА ПОДПИСКИ ==========
+# ========== СИСТЕМА ПОДПИСКИ (4 запроса в МЕСЯЦ) ==========
 DATA_FILE = "premium_users.json"
 
 def load_data():
@@ -97,35 +84,41 @@ def save_data(data):
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 def get_user_requests(user_id: str) -> int:
+    """Возвращает количество использованных запросов в этом месяце"""
     data = load_data()
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now()
+    current_month = today.strftime("%Y-%m")
     
     if user_id not in data:
-        data[user_id] = {"requests": 0, "date": today, "premium_until": None}
+        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None}
     
-    if data[user_id].get("date") != today:
+    # Если месяц изменился — сбрасываем счётчик
+    if data[user_id].get("month") != current_month:
         data[user_id]["requests"] = 0
-        data[user_id]["date"] = today
+        data[user_id]["month"] = current_month
     
     save_data(data)
     return data[user_id]["requests"]
 
 def increment_requests(user_id: str) -> int:
+    """Увеличивает счётчик запросов за месяц"""
     data = load_data()
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now()
+    current_month = today.strftime("%Y-%m")
     
     if user_id not in data:
-        data[user_id] = {"requests": 0, "date": today, "premium_until": None}
+        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None}
     
-    if data[user_id].get("date") != today:
+    if data[user_id].get("month") != current_month:
         data[user_id]["requests"] = 0
-        data[user_id]["date"] = today
+        data[user_id]["month"] = current_month
     
     data[user_id]["requests"] += 1
     save_data(data)
     return data[user_id]["requests"]
 
 def is_premium(user_id: str) -> bool:
+    """Проверяет активность премиум-подписки"""
     data = load_data()
     if user_id not in data:
         return False
@@ -138,19 +131,29 @@ def is_premium(user_id: str) -> bool:
     return expire_date > datetime.now()
 
 def add_premium(user_id: str, days: int):
+    """Добавляет подписку (прибавляет дни к существующей, если есть)"""
     data = load_data()
-    if user_id not in data:
-        data[user_id] = {"requests": 0, "date": datetime.now().strftime("%Y-%m-%d"), "premium_until": None}
+    today = datetime.now()
+    current_month = today.strftime("%Y-%m")
     
-    new_expiry = datetime.now() + timedelta(days=days)
+    if user_id not in data:
+        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None}
+    
+    current_expiry = data[user_id].get("premium_until")
+    if current_expiry:
+        new_expiry = datetime.fromisoformat(current_expiry) + timedelta(days=days)
+    else:
+        new_expiry = datetime.now() + timedelta(days=days)
+    
     data[user_id]["premium_until"] = new_expiry.isoformat()
     save_data(data)
 
 def get_remaining_free_requests(user_id: str) -> int:
+    """Возвращает остаток бесплатных запросов (максимум 4 в месяц)"""
     used = get_user_requests(user_id)
     return max(0, 4 - used)
 
-# ========== БАЗА УК И ПК ==========
+# ========== БАЗА УК И ПК (сокращена для читаемости) ==========
 uk_sections = {
     "VI": "Преступления против жизни и здоровья",
     "VII": "Преступления против свободы, чести и достоинства",
@@ -241,7 +244,7 @@ async def ask_ai(question: str) -> str:
     except Exception as e:
         return f"❌ Ошибка ИИ: {str(e)}"
 
-# ========== ПОИСК ==========
+# ========== УНИВЕРСАЛЬНЫЙ ПОИСК ==========
 def smart_search(query: str, database: list):
     query_lower = query.lower().strip()
     found = []
@@ -271,24 +274,48 @@ def smart_search(query: str, database: list):
                         found.append(law)
     return found
 
+# ========== ПРОВЕРКА ЛИМИТА (ДЕКОРАТОР) ==========
+def check_limit():
+    async def predicate(interaction: discord.Interaction):
+        user_id = str(interaction.user.id)
+        
+        if is_premium(user_id):
+            return True
+        
+        remaining = get_remaining_free_requests(user_id)
+        if remaining > 0:
+            return True
+        
+        embed = discord.Embed(
+            title="⚠️ Лимит запросов исчерпан",
+            description=f"У вас осталось **0** из 4 бесплатных запросов на этот месяц.\n\n"
+                        f"💰 **Премиум-подписка** — 60 ₽/месяц\n"
+                        f"✅ Безлимитные запросы\n"
+                        f"✅ Приоритетная поддержка\n\n"
+                        f"🔗 **Оплатить:** `/купить`",
+            color=discord.Color.orange()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return False
+    return app_commands.check(predicate)
+
 # ========== СОБЫТИЕ ГОТОВНОСТИ ==========
 @bot.event
 async def on_ready():
     print(f"✅ Бот {bot.user} готов!")
     print(f"📜 УК: {len(uk_laws)} статей | ПК: {len(pk_laws)} статей")
-    print(f"💎 Система подписки активна (бесплатно: 4 запроса/день, премиум: безлимит)")
-    print(f"🔗 DonationAlerts вебхук настроен на /webhook/donationalerts")
+    print(f"💎 Система подписки: 4 бесплатных запроса в месяц, премиум — безлимит")
     
     try:
         synced = await bot.tree.sync()
         print(f"🔗 Синхронизировано {len(synced)} слэш-команд")
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка синхронизации: {e}")
     
     Thread(target=run_web_server, daemon=True).start()
     print("🌐 Веб-сервер запущен на порту 8080")
 
-# ========== ПРЕМИУМ-КОМАНДЫ ==========
+# ========== ПРЕМИУМ-КОМАНДЫ ДЛЯ АДМИНА ==========
 @bot.tree.command(name="give_premium", description="[АДМИН] Выдать премиум пользователю")
 @app_commands.describe(user="Пользователь", days="Количество дней")
 async def give_premium(interaction: discord.Interaction, user: discord.User, days: int):
@@ -304,16 +331,21 @@ async def give_premium(interaction: discord.Interaction, user: discord.User, day
 async def premium_status(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
     premium = is_premium(user_id)
-    remaining = get_remaining_free_requests(user_id)
+    used = get_user_requests(user_id)
+    remaining = 4 - used
     
     if premium:
         data = load_data()
         expire = data[user_id].get("premium_until", "Неизвестно")
-        embed = discord.Embed(title="💎 Премиум статус", description=f"✅ У вас активна премиум-подписка!\n📅 Действует до: {expire[:10]}", color=discord.Color.green())
+        embed = discord.Embed(
+            title="💎 Премиум статус", 
+            description=f"✅ У вас активна премиум-подписка!\n📅 Действует до: {expire[:10]}\n📊 Использовано запросов в этом месяце: {used}",
+            color=discord.Color.green()
+        )
     else:
         embed = discord.Embed(
             title="💎 Премиум статус",
-            description=f"❌ У вас нет активной подписки.\n\n📊 Сегодня осталось: **{remaining}** бесплатных запросов\n💰 Премиум: **60 ₽/месяц** — безлимитные запросы",
+            description=f"❌ У вас нет активной подписки.\n\n📊 В этом месяце использовано: **{used}** из 4 бесплатных запросов\n💰 Премиум: **60 ₽/месяц** — безлимитные запросы",
             color=discord.Color.orange()
         )
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -323,12 +355,14 @@ async def premium_status(interaction: discord.Interaction):
 @app_commands.describe(query="Номер статьи или название")
 async def uk_slash(interaction: discord.Interaction, query: str):
     user_id = str(interaction.user.id)
+    
+    # Проверка лимита
     if not is_premium(user_id):
         remaining = get_remaining_free_requests(user_id)
         if remaining <= 0:
             embed = discord.Embed(
                 title="⚠️ Лимит исчерпан",
-                description=f"Купите премиум за **60 ₽/месяц**!\n`/купить` — получить ссылку на оплату",
+                description=f"У вас осталось **0** из 4 бесплатных запросов на этот месяц.\n\n💰 **Премиум** — 60 ₽/месяц: `/купить`",
                 color=discord.Color.orange()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -341,10 +375,12 @@ async def uk_slash(interaction: discord.Interaction, query: str):
         await interaction.followup.send(f"❌ Ничего не найдено по `{query}`")
         return
     
+    # Увеличиваем счётчик только если не премиум
     if not is_premium(user_id):
         increment_requests(user_id)
-        remaining = get_remaining_free_requests(user_id)
-        await interaction.followup.send(f"📊 Осталось бесплатных запросов сегодня: {remaining}")
+        used = get_user_requests(user_id)
+        remaining = 4 - used
+        await interaction.followup.send(f"📊 Использовано запросов в этом месяце: {used}/4 (осталось {remaining})")
     
     if len(results) > 1:
         embed = discord.Embed(title=f"🔍 Найдено {len(results)} статей", color=discord.Color.orange())
@@ -364,12 +400,13 @@ async def uk_slash(interaction: discord.Interaction, query: str):
 @app_commands.describe(query="Номер статьи или тема")
 async def pk_slash(interaction: discord.Interaction, query: str):
     user_id = str(interaction.user.id)
+    
     if not is_premium(user_id):
         remaining = get_remaining_free_requests(user_id)
         if remaining <= 0:
             embed = discord.Embed(
                 title="⚠️ Лимит исчерпан",
-                description=f"Купите премиум за **60 ₽/месяц**!\n`/купить` — получить ссылку на оплату",
+                description=f"У вас осталось **0** из 4 бесплатных запросов на этот месяц.\n\n💰 **Премиум** — 60 ₽/месяц: `/купить`",
                 color=discord.Color.orange()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -384,8 +421,9 @@ async def pk_slash(interaction: discord.Interaction, query: str):
     
     if not is_premium(user_id):
         increment_requests(user_id)
-        remaining = get_remaining_free_requests(user_id)
-        await interaction.followup.send(f"📊 Осталось бесплатных запросов сегодня: {remaining}")
+        used = get_user_requests(user_id)
+        remaining = 4 - used
+        await interaction.followup.send(f"📊 Использовано запросов в этом месяце: {used}/4 (осталось {remaining})")
     
     if len(results) > 1:
         embed = discord.Embed(title=f"🔍 Найдено {len(results)} статей", color=discord.Color.green())
@@ -405,12 +443,13 @@ async def pk_slash(interaction: discord.Interaction, query: str):
 @app_commands.describe(question="Ваш вопрос по УК или ПК")
 async def ask_question(interaction: discord.Interaction, question: str):
     user_id = str(interaction.user.id)
+    
     if not is_premium(user_id):
         remaining = get_remaining_free_requests(user_id)
         if remaining <= 0:
             embed = discord.Embed(
                 title="⚠️ Лимит исчерпан",
-                description=f"Купите премиум за **60 ₽/месяц**!\n`/купить` — получить ссылку на оплату",
+                description=f"У вас осталось **0** из 4 бесплатных запросов на этот месяц.\n\n💰 **Премиум** — 60 ₽/месяц: `/купить`",
                 color=discord.Color.orange()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -420,8 +459,9 @@ async def ask_question(interaction: discord.Interaction, question: str):
     
     if not is_premium(user_id):
         increment_requests(user_id)
-        remaining = get_remaining_free_requests(user_id)
-        await interaction.followup.send(f"📊 Осталось бесплатных запросов сегодня: {remaining}")
+        used = get_user_requests(user_id)
+        remaining = 4 - used
+        await interaction.followup.send(f"📊 Использовано запросов в этом месяце: {used}/4 (осталось {remaining})")
     
     answer = await ask_ai(question)
     embed = discord.Embed(title="⚖️ ИИ-адвокат", description=answer, color=discord.Color.purple())
@@ -430,38 +470,35 @@ async def ask_question(interaction: discord.Interaction, question: str):
 @bot.tree.command(name="купить", description="Получить ссылку на оплату премиума")
 async def buy_premium(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
-    user_name = interaction.user.name
     
     embed = discord.Embed(
         title="💎 Купить премиум — 60 ₽/месяц",
         description=(
             "🔥 **Что даёт премиум:**\n"
             "• Безлимитные запросы к боту\n"
-            "• Приоритетная поддержка\n"
-            "• Ранний доступ к новым функциям\n\n"
+            "• Приоритетная поддержка\n\n"
             "💳 **Как оплатить:**\n"
-            "1. Переведите 60 ₽ на карту [ваша карта]\n"
-            "2. В комментарии укажите: `!премиум {}`\n"
-            "3. После оплаты бот автоматически выдаст вам премиум!\n\n"
-            "⚡ Или через DonationAlerts: [ссылка]\n\n"
+            "1. Перейдите по ссылке: [DonationAlerts](https://www.donationalerts.com/r/ваш_никнейм)\n"
+            "2. Выберите сумму **60 ₽**\n"
+            "3. В комментарии укажите: `!премиум {user_id}`\n"
+            "4. После оплаты бот автоматически выдаст премиум на 30 дней!\n\n"
             "📌 Статус подписки: `/premium_status`"
-        ).format(user_id),
+        ),
         color=discord.Color.gold()
     )
-    embed.set_footer(text="Подписка продлевается автоматически каждый месяц")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="инфо", description="Информация о боте")
+@bot.tree.command(name="инфо", description="Информация о боте и подписке")
 async def info_slash(interaction: discord.Interaction):
     embed = discord.Embed(title="📚 Юридический помощник Majestic RP", color=discord.Color.gold())
-    embed.add_field(name="💎 Бесплатно", value="• 4 запроса в день на команды `/ук`, `/пк`, `/вопрос`", inline=False)
+    embed.add_field(name="💎 Бесплатно", value="• 4 запроса в месяц на команды `/ук`, `/пк`, `/вопрос`", inline=False)
     embed.add_field(name="💰 Премиум (60 ₽/месяц)", value="• Безлимитные запросы\n• Приоритетная поддержка", inline=False)
     embed.add_field(name="🔗 Команды", value="`/купить` — оплатить премиум\n`/premium_status` — проверить статус\n`/вопрос` — спросить ИИ\n`/ук` и `/пк` — поиск статей\n`/разделы_ук` и `/разделы_пк` — разделы", inline=False)
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="разделы_ук", description="Показать разделы УК")
 async def uk_sections_cmd(interaction: discord.Interaction):
-    embed = discord.Embed(title="📚 Разделы УК", color=discord.Color.red())
+    embed = discord.Embed(title="📚 Разделы Уголовного кодекса", color=discord.Color.red())
     for num, name in uk_sections.items():
         count = len([l for l in uk_laws if l["section"] == num])
         embed.add_field(name=f"Глава {num}", value=f"{name}\n└ {count} статей", inline=True)
@@ -469,7 +506,7 @@ async def uk_sections_cmd(interaction: discord.Interaction):
 
 @bot.tree.command(name="разделы_пк", description="Показать разделы ПК")
 async def pk_sections_cmd(interaction: discord.Interaction):
-    embed = discord.Embed(title="📚 Разделы ПК", color=discord.Color.green())
+    embed = discord.Embed(title="📚 Разделы Процессуального кодекса", color=discord.Color.green())
     for num, name in pk_sections.items():
         count = len([l for l in pk_laws if l["section"] == num])
         embed.add_field(name=f"Раздел {num}", value=f"{name}\n└ {count} статей", inline=True)
@@ -478,27 +515,32 @@ async def pk_sections_cmd(interaction: discord.Interaction):
 @bot.tree.command(name="справка", description="Показать все команды")
 async def help_slash(interaction: discord.Interaction):
     embed = discord.Embed(title="📚 Помощь", color=discord.Color.gold())
-    embed.add_field(name="⚖️ УК", value="`/ук убийство` — поиск", inline=False)
-    embed.add_field(name="📜 ПК", value="`/пк задержание` — поиск", inline=False)
-    embed.add_field(name="🤖 ИИ", value="`/вопрос Твой вопрос`", inline=False)
+    embed.add_field(name="⚖️ УК", value="`/ук убийство` — поиск статей", inline=False)
+    embed.add_field(name="📜 ПК", value="`/пк задержание` — поиск статей", inline=False)
+    embed.add_field(name="🤖 ИИ", value="`/вопрос Твой вопрос` — консультация", inline=False)
     embed.add_field(name="📚 Разделы", value="`/разделы_ук` и `/разделы_пк`", inline=False)
-    embed.add_field(name="💎 Премиум", value="`/купить`, `/premium_status`, `/инфо`", inline=False)
+    embed.add_field(name="💎 Подписка", value="`/купить`, `/premium_status`, `/инфо`", inline=False)
     await interaction.response.send_message(embed=embed)
 
-# Префиксные команды
+# Префиксные команды для обратной совместимости
 @bot.command(name="вопрос")
 async def ask_prefix(ctx, *, question: str):
     user_id = str(ctx.author.id)
+    
     if not is_premium(user_id):
         remaining = get_remaining_free_requests(user_id)
         if remaining <= 0:
-            embed = discord.Embed(title="⚠️ Лимит исчерпан", description="Купите премиум за 60 ₽/месяц! `/купить`", color=discord.Color.orange())
+            embed = discord.Embed(title="⚠️ Лимит исчерпан", description=f"Купите премиум за 60 ₽/месяц! `/купить`\nОсталось запросов: {remaining}", color=discord.Color.orange())
             await ctx.send(embed=embed)
             return
     
     async with ctx.typing():
         if not is_premium(user_id):
             increment_requests(user_id)
+            used = get_user_requests(user_id)
+            remaining = 4 - used
+            await ctx.send(f"📊 Использовано запросов в этом месяце: {used}/4 (осталось {remaining})")
+        
         answer = await ask_ai(question)
         embed = discord.Embed(title="⚖️ ИИ-адвокат", description=answer, color=discord.Color.blue())
         await ctx.send(embed=embed)
