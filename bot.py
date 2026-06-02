@@ -40,36 +40,36 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ===== ID ВЛАДЕЛЬЦА БОТА =====
-OWNER_ID = 920268444983775252  # ⚠️ ЗАМЕНИТЕ НА ВАШ DISCORD ID!
+OWNER_ID = 920268444983775252 
 
 def is_owner(interaction: discord.Interaction) -> bool:
     return interaction.user.id == OWNER_ID
 
-# ========== КНОПКИ ВЫБОРА СРОКА ПОДПИСКИ ==========
+# ========== КНОПКИ ВЫБОРА СРОКА ПОДПИСКИ (ИСПРАВЛЕННЫЙ КЛАСС) ==========
 class PremiumDurationView(View):
     """Кнопки выбора срока подписки"""
     def __init__(self, user_id: str):
         super().__init__(timeout=120)
         self.user_id = user_id
     
-    @Button(label="30 дней - 55 ₽", style=discord.ButtonStyle.green, emoji="💎", row=0)
-    async def premium_30(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label="30 дней - 55 ₽", style=discord.ButtonStyle.green, emoji="💎", row=0)
+    async def premium_30(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process_payment(interaction, 30, 55)
     
-    @Button(label="60 дней - 110 ₽", style=discord.ButtonStyle.blurple, emoji="💎", row=0)
-    async def premium_60(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label="60 дней - 110 ₽", style=discord.ButtonStyle.blurple, emoji="💎", row=0)
+    async def premium_60(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process_payment(interaction, 60, 110)
     
-    @Button(label="90 дней - 165 ₽", style=discord.ButtonStyle.blurple, emoji="💎", row=1)
-    async def premium_90(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label="90 дней - 165 ₽", style=discord.ButtonStyle.blurple, emoji="💎", row=1)
+    async def premium_90(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process_payment(interaction, 90, 165)
     
-    @Button(label="180 дней - 330 ₽", style=discord.ButtonStyle.blurple, emoji="💎", row=1)
-    async def premium_180(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label="180 дней - 330 ₽", style=discord.ButtonStyle.blurple, emoji="💎", row=1)
+    async def premium_180(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process_payment(interaction, 180, 330)
     
-    @Button(label="365 дней - 660 ₽", style=discord.ButtonStyle.gold, emoji="👑", row=2)
-    async def premium_365(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label="365 дней - 660 ₽", style=discord.ButtonStyle.gold, emoji="👑", row=2)
+    async def premium_365(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process_payment(interaction, 365, 660)
     
     async def process_payment(self, interaction: discord.Interaction, days: int, price: int):
@@ -179,7 +179,7 @@ def get_remaining_free_requests(user_id: str) -> int:
     used = get_user_requests(user_id)
     return max(0, 5 - used)  # 5 пробных запросов
 
-# ========== БАЗА УК (сокращена для читаемости) ==========
+# ========== БАЗА УК ==========
 uk_sections = {
     "VI": "Преступления против жизни и здоровья",
     "VII": "Преступления против свободы, чести и достоинства",
@@ -548,7 +548,7 @@ async def info_slash(interaction: discord.Interaction):
     embed.add_field(name="🔗 Команды", value="`/купить`, `/premium_status`, `/справка`", inline=False)
     await interaction.response.send_message(embed=embed)
 
-# Префиксная команда для обратной совместимости
+# Префиксная команда
 @bot.command(name="вопрос")
 async def ask_prefix(ctx, *, question: str):
     user_id = str(ctx.author.id)
