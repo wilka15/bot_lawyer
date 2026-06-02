@@ -68,20 +68,23 @@ OWNER_ID = 920268444983775252  # ⚠️ ЗАМЕНИТЕ НА ВАШ ID!
 def is_owner(interaction: discord.Interaction) -> bool:
     return interaction.user.id == OWNER_ID
 
-# ========== СИСТЕМА ПОДПИСКИ ==========
+# ========== СИСТЕМА ПОДПИСКИ С ПАМЯТЬЮ ==========
 DATA_FILE = "premium_users.json"
 
 def load_data():
+    """Загружает данные из файла"""
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     return {}
 
 def save_data(data):
+    """Сохраняет данные в файл"""
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 def get_user_requests(user_id: str) -> int:
+    """Возвращает количество использованных запросов в этом месяце"""
     data = load_data()
     current_month = datetime.now().strftime("%Y-%m")
     
@@ -96,6 +99,7 @@ def get_user_requests(user_id: str) -> int:
     return data[user_id]["requests"]
 
 def increment_requests(user_id: str) -> int:
+    """Увеличивает счётчик запросов"""
     data = load_data()
     current_month = datetime.now().strftime("%Y-%m")
     
@@ -111,6 +115,7 @@ def increment_requests(user_id: str) -> int:
     return data[user_id]["requests"]
 
 def is_premium(user_id: str) -> bool:
+    """Проверяет активность премиум-подписки (с автоматической проверкой срока)"""
     data = load_data()
     if user_id not in data:
         return False
@@ -120,9 +125,17 @@ def is_premium(user_id: str) -> bool:
         return False
     
     expire_date = datetime.fromisoformat(premium_until)
-    return expire_date > datetime.now()
+    
+    # Если подписка истекла — удаляем её из памяти
+    if expire_date <= datetime.now():
+        data[user_id]["premium_until"] = None
+        save_data(data)
+        return False
+    
+    return True
 
 def add_premium(user_id: str, days: int):
+    """Добавляет или продлевает подписку (прибавляет дни)"""
     data = load_data()
     current_month = datetime.now().strftime("%Y-%m")
     
@@ -137,11 +150,30 @@ def add_premium(user_id: str, days: int):
     
     data[user_id]["premium_until"] = new_expiry.isoformat()
     save_data(data)
-    print(f"💎 Премиум выдан пользователю {user_id} до {new_expiry.strftime('%Y-%m-%d')}")
+    print(f"💎 Премиум выдан/продлён {user_id} до {new_expiry.strftime('%Y-%m-%d')}")
+
+def get_premium_expiry(user_id: str) -> str:
+    """Возвращает дату истечения подписки"""
+    data = load_data()
+    if user_id not in data:
+        return None
+    return data[user_id].get("premium_until")
 
 def get_remaining_free_requests(user_id: str) -> int:
+    """Возвращает остаток бесплатных запросов (максимум 4 в месяц)"""
     used = get_user_requests(user_id)
     return max(0, 4 - used)
+
+def get_all_premium_users() -> list:
+    """Возвращает список всех пользователей с активной подпиской"""
+    data = load_data()
+    premium_list = []
+    for user_id, info in data.items():
+        if info.get("premium_until"):
+            expire_date = datetime.fromisoformat(info["premium_until"])
+            if expire_date > datetime.now():
+                premium_list.append({"id": user_id, "expires": info["premium_until"]})
+    return premium_list
 
 # ========== БАЗА УК ==========
 uk_sections = {
@@ -273,6 +305,12 @@ async def on_ready():
     print(f"💎 Бесплатно: 4 запроса в месяц | Премиум: 55 ₽/месяц")
     print(f"👑 Владелец бота: {OWNER_ID}")
     
+    # Выводим список активных премиум-пользователей
+    premium_users = get_all_premium_users()
+    print(f"💎 Активных премиум-подписок: {len(premium_users)}")
+    for pu in premium_users[:5]:
+        print(f"   - {pu['id']} до {pu['expires'][:10]}")
+    
     try:
         synced = await bot.tree.sync()
         print(f"🔗 Синхронизировано {len(synced)} слэш-команд")
@@ -282,7 +320,7 @@ async def on_ready():
     Thread(target=run_web_server, daemon=True).start()
     print("🌐 Веб-сервер запущен")
 
-# ========== АДМИН-КОМАНДА ==========
+# ========== АДМИН-КОМАНДЫ ==========
 @bot.tree.command(name="give_premium", description="[АДМИН] Выдать премиум пользователю вручную")
 @app_commands.describe(user="Пользователь", days="Количество дней (обычно 30)")
 async def give_premium(interaction: discord.Interaction, user: discord.User, days: int):
@@ -292,8 +330,37 @@ async def give_premium(interaction: discord.Interaction, user: discord.User, day
         return
     
     add_premium(str(user.id), days)
-    embed = discord.Embed(title="✅ Премиум выдан!", description=f"{user.mention} получил премиум на **{days}** дней.", color=discord.Color.green())
+    new_expiry = get_premium_expiry(str(user.id))
+    embed = discord.Embed(
+        title="✅ Премиум выдан!",
+        description=f"{user.mention} получил премиум на **{days}** дней.\n📅 Действует до: {new_expiry[:10]}",
+        color=discord.Color.green()
+    )
     await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="list_premium", description="[АДМИН] Показать список активных премиум-подписок")
+async def list_premium(interaction: discord.Interaction):
+    if not (is_owner(interaction) or interaction.user.guild_permissions.administrator):
+        embed = discord.Embed(title="❌ Нет прав!", description="Команда только для администраторов.", color=discord.Color.red())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    premium_users = get_all_premium_users()
+    if not premium_users:
+        embed = discord.Embed(title="💎 Активные подписки", description="Нет активных премиум-подписок.", color=discord.Color.orange())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    embed = discord.Embed(title="💎 Активные премиум-подписки", color=discord.Color.green())
+    for pu in premium_users:
+        try:
+            user = await bot.fetch_user(int(pu["id"]))
+            name = user.name
+        except:
+            name = f"ID: {pu['id']}"
+        embed.add_field(name=f"👤 {name}", value=f"📅 До: {pu['expires'][:10]}", inline=False)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ========== ОСНОВНЫЕ КОМАНДЫ ==========
 @bot.tree.command(name="ук", description="Поиск по Уголовному кодексу")
@@ -424,11 +491,18 @@ async def premium_status(interaction: discord.Interaction):
     used = get_user_requests(user_id)
     
     if premium:
-        data = load_data()
-        expire = data[user_id].get("premium_until", "Неизвестно")
-        embed = discord.Embed(title="💎 Статус подписки", description=f"✅ Премиум **активен**\n📅 Действует до: {expire[:10]}\n📊 Запросов в месяце: {used}/4 (безлимит)", color=discord.Color.green())
+        expire = get_premium_expiry(user_id)
+        embed = discord.Embed(
+            title="💎 Статус подписки",
+            description=f"✅ Премиум **активен**\n📅 Действует до: {expire[:10]}\n📊 Запросов в месяце: {used}/4 (безлимит)",
+            color=discord.Color.green()
+        )
     else:
-        embed = discord.Embed(title="💎 Статус подписки", description=f"❌ Премиум **не активен**\n\n📊 Использовано запросов: **{used}** из 4\n💰 Премиум: **55 ₽/месяц**\n\n🔗 Купить: `/купить`", color=discord.Color.orange())
+        embed = discord.Embed(
+            title="💎 Статус подписки",
+            description=f"❌ Премиум **не активен**\n\n📊 Использовано запросов: **{used}** из 4\n💰 Премиум: **55 ₽/месяц**\n\n🔗 Купить: `/купить`",
+            color=discord.Color.orange()
+        )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="инфо", description="Информация о боте")
@@ -464,7 +538,6 @@ async def support_command(interaction: discord.Interaction, вопрос: str):
     user_id = user.id
     user_mention = user.mention
     
-    # Отправляем уведомление владельцу бота в ЛС
     try:
         owner = await bot.fetch_user(OWNER_ID)
         if owner:
@@ -479,7 +552,6 @@ async def support_command(interaction: discord.Interaction, вопрос: str):
     except Exception as e:
         print(f"❌ Ошибка отправки владельцу: {e}")
     
-    # Подтверждение пользователю
     embed_to_user = discord.Embed(
         title="✅ Запрос отправлен!",
         description=f"Ваш вопрос отправлен в поддержку. Владелец бота свяжется с вами в ближайшее время.\n\n**Ваш вопрос:**\n{вопрос}",
@@ -520,7 +592,7 @@ async def help_slash(interaction: discord.Interaction):
     embed.add_field(name="📚 Разделы", value="`/разделы_ук`, `/разделы_пк`", inline=False)
     embed.add_field(name="💎 Подписка", value="`/купить`, `/premium_status`, `/инфо`", inline=False)
     embed.add_field(name="🆘 Поддержка", value="`/поддержка Твой вопрос`", inline=False)
-    embed.add_field(name="👑 Админ", value="`/give_premium @user 30`, `/ответ ID текст`", inline=False)
+    embed.add_field(name="👑 Админ", value="`/give_premium @user 30`, `/list_premium`, `/ответ ID текст`", inline=False)
     await interaction.response.send_message(embed=embed)
 
 @bot.command(name="вопрос")
