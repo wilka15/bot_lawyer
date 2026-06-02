@@ -62,6 +62,14 @@ model = genai.GenerativeModel('gemini-2.0-flash')
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# ===== ID ВЛАДЕЛЬЦА БОТА (ВАШ ID) =====
+# 🔴🔴🔴 ВСТАВЬТЕ ВАШ DISCORD ID СЮДА (число без кавычек) 🔴🔴🔴
+OWNER_ID = 920268444983775252  # ⚠️ ЗАМЕНИТЕ НА ВАШ ID!
+
+def is_owner(interaction: discord.Interaction) -> bool:
+    """Проверяет, является ли пользователь владельцем бота"""
+    return interaction.user.id == OWNER_ID
+
 # ========== СИСТЕМА ПОДПИСКИ (4 запроса в МЕСЯЦ) ==========
 DATA_FILE = "premium_users.json"
 
@@ -265,6 +273,7 @@ async def on_ready():
     print(f"✅ Бот {bot.user} готов!")
     print(f"📜 УК: {len(uk_laws)} статей | ПК: {len(pk_laws)} статей")
     print(f"💎 Бесплатно: 4 запроса в месяц | Премиум: 55 ₽/месяц")
+    print(f"👑 Владелец бота: {OWNER_ID}")
     
     try:
         synced = await bot.tree.sync()
@@ -275,14 +284,15 @@ async def on_ready():
     Thread(target=run_web_server, daemon=True).start()
     print("🌐 Веб-сервер запущен")
 
-# ========== АДМИН-КОМАНДА ==========
+# ========== АДМИН-КОМАНДА (доступна владельцу бота и админам сервера) ==========
 @bot.tree.command(name="give_premium", description="[АДМИН] Выдать премиум пользователю вручную")
 @app_commands.describe(user="Пользователь", days="Количество дней (обычно 30)")
 async def give_premium(interaction: discord.Interaction, user: discord.User, days: int):
-    if not interaction.user.guild_permissions.administrator:
+    # Проверка: владелец бота ИЛИ администратор сервера
+    if not (is_owner(interaction) or interaction.user.guild_permissions.administrator):
         embed = discord.Embed(
             title="❌ Нет прав!",
-            description="Команда `/give_premium` доступна только **администраторам сервера**.",
+            description="Команда `/give_premium` доступна только **владельцу бота** или **администраторам сервера**.",
             color=discord.Color.red()
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -296,7 +306,7 @@ async def give_premium(interaction: discord.Interaction, user: discord.User, day
     )
     await interaction.response.send_message(embed=embed)
 
-# ========== ОСНОВНЫЕ КОМАНДЫ ==========
+# ========== ОСТАЛЬНЫЕ КОМАНДЫ (без изменений) ==========
 @bot.tree.command(name="ук", description="Поиск по Уголовному кодексу")
 @app_commands.describe(query="Номер статьи или название")
 async def uk_slash(interaction: discord.Interaction, query: str):
