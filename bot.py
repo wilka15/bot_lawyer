@@ -289,7 +289,7 @@ def check_limit():
         embed = discord.Embed(
             title="⚠️ Лимит запросов исчерпан",
             description=f"У вас осталось **0** из 4 бесплатных запросов на этот месяц.\n\n"
-                        f"💰 **Премиум-подписка** — 60 ₽/месяц\n"
+                        f"💰 **Премиум-подписка** — 55 ₽/месяц\n"
                         f"✅ Безлимитные запросы\n"
                         f"✅ Приоритетная поддержка\n\n"
                         f"🔗 **Оплатить:** `/купить`",
@@ -345,7 +345,7 @@ async def premium_status(interaction: discord.Interaction):
     else:
         embed = discord.Embed(
             title="💎 Премиум статус",
-            description=f"❌ У вас нет активной подписки.\n\n📊 В этом месяце использовано: **{used}** из 4 бесплатных запросов\n💰 Премиум: **60 ₽/месяц** — безлимитные запросы",
+            description=f"❌ У вас нет активной подписки.\n\n📊 В этом месяце использовано: **{used}** из 4 бесплатных запросов\n💰 Премиум: **55 ₽/месяц** — безлимитные запросы",
             color=discord.Color.orange()
         )
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -362,7 +362,7 @@ async def uk_slash(interaction: discord.Interaction, query: str):
         if remaining <= 0:
             embed = discord.Embed(
                 title="⚠️ Лимит исчерпан",
-                description=f"У вас осталось **0** из 4 бесплатных запросов на этот месяц.\n\n💰 **Премиум** — 60 ₽/месяц: `/купить`",
+                description=f"У вас осталось **0** из 4 бесплатных запросов на этот месяц.\n\n💰 **Премиум** — 55 ₽/месяц: `/купить`",
                 color=discord.Color.orange()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -406,7 +406,7 @@ async def pk_slash(interaction: discord.Interaction, query: str):
         if remaining <= 0:
             embed = discord.Embed(
                 title="⚠️ Лимит исчерпан",
-                description=f"У вас осталось **0** из 4 бесплатных запросов на этот месяц.\n\n💰 **Премиум** — 60 ₽/месяц: `/купить`",
+                description=f"У вас осталось **0** из 4 бесплатных запросов на этот месяц.\n\n💰 **Премиум** — 55 ₽/месяц: `/купить`",
                 color=discord.Color.orange()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -449,7 +449,7 @@ async def ask_question(interaction: discord.Interaction, question: str):
         if remaining <= 0:
             embed = discord.Embed(
                 title="⚠️ Лимит исчерпан",
-                description=f"У вас осталось **0** из 4 бесплатных запросов на этот месяц.\n\n💰 **Премиум** — 60 ₽/месяц: `/купить`",
+                description=f"У вас осталось **0** из 4 бесплатных запросов на этот месяц.\n\n💰 **Премиум** — 55 ₽/месяц: `/купить`",
                 color=discord.Color.orange()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -472,14 +472,14 @@ async def buy_premium(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
     
     embed = discord.Embed(
-        title="💎 Купить премиум — 60 ₽/месяц",
+        title="💎 Купить премиум — 55 ₽/месяц",
         description=(
             "🔥 **Что даёт премиум:**\n"
             "• Безлимитные запросы к боту\n"
             "• Приоритетная поддержка\n\n"
             "💳 **Как оплатить:**\n"
             "1. Перейдите по ссылке: [DonationAlerts](https://www.donationalerts.com/r/wilka_wilkovich)\n"
-            "2. Выберите сумму **60 ₽**\n"
+            "2. Выберите сумму **55 ₽**\n"
             "3. В комментарии укажите: `!премиум {user_id}`\n"
             "4. После оплаты бот автоматически выдаст премиум на 30 дней!\n\n"
             "📌 Статус подписки: `/premium_status`"
@@ -492,7 +492,7 @@ async def buy_premium(interaction: discord.Interaction):
 async def info_slash(interaction: discord.Interaction):
     embed = discord.Embed(title="📚 Юридический помощник Majestic RP", color=discord.Color.gold())
     embed.add_field(name="💎 Бесплатно", value="• 4 запроса в месяц на команды `/ук`, `/пк`, `/вопрос`", inline=False)
-    embed.add_field(name="💰 Премиум (60 ₽/месяц)", value="• Безлимитные запросы\n• Приоритетная поддержка", inline=False)
+    embed.add_field(name="💰 Премиум (55 ₽/месяц)", value="• Безлимитные запросы\n• Приоритетная поддержка", inline=False)
     embed.add_field(name="🔗 Команды", value="`/купить` — оплатить премиум\n`/premium_status` — проверить статус\n`/вопрос` — спросить ИИ\n`/ук` и `/пк` — поиск статей\n`/разделы_ук` и `/разделы_пк` — разделы", inline=False)
     await interaction.response.send_message(embed=embed)
 
@@ -530,7 +530,7 @@ async def ask_prefix(ctx, *, question: str):
     if not is_premium(user_id):
         remaining = get_remaining_free_requests(user_id)
         if remaining <= 0:
-            embed = discord.Embed(title="⚠️ Лимит исчерпан", description=f"Купите премиум за 60 ₽/месяц! `/купить`\nОсталось запросов: {remaining}", color=discord.Color.orange())
+            embed = discord.Embed(title="⚠️ Лимит исчерпан", description=f"Купите премиум за 55 ₽/месяц! `/купить`\nОсталось запросов: {remaining}", color=discord.Color.orange())
             await ctx.send(embed=embed)
             return
     
