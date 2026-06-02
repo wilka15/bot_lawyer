@@ -40,12 +40,12 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ===== ID ВЛАДЕЛЬЦА БОТА =====
-OWNER_ID = 920268444983775252  
+OWNER_ID = 920268444983775252  # ⚠️ ЗАМЕНИТЕ НА ВАШ DISCORD ID!
 
 def is_owner(interaction: discord.Interaction) -> bool:
     return interaction.user.id == OWNER_ID
 
-# ========== КНОПКИ ВЫБОРА СРОКА ПОДПИСКИ (ИСПРАВЛЕННЫЙ КЛАСС) ==========
+# ========== КНОПКИ ВЫБОРА СРОКА ПОДПИСКИ ==========
 class PremiumDurationView(View):
     """Кнопки выбора срока подписки"""
     def __init__(self, user_id: str):
@@ -323,9 +323,29 @@ async def on_ready():
 @bot.tree.command(name="купить", description="Купить премиум (выберите срок)")
 async def buy_premium(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
+    
     embed = discord.Embed(
         title="💎 Выберите срок подписки",
-        description="Нажмите на кнопку с нужным сроком:",
+        description=(
+            "Нажмите на кнопку с нужным сроком:\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "**📌 Как получить свой Discord ID:**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "**🖥️ На компьютере:**\n"
+            "1. Нажмите на шестерёнку (⚙️) рядом с вашим именем\n"
+            "2. Выберите **«Дополнительно»** (Advanced)\n"
+            "3. Включите **«Режим разработчика»** (Developer Mode)\n"
+            "4. Нажмите правой кнопкой мыши по своему имени\n"
+            "5. Выберите **«Копировать ID»**\n\n"
+            "**📱 На телефоне:**\n"
+            "1. Нажмите на свою аватарку в правом нижнем углу\n"
+            "2. Выберите **«Внешний вид»** (Appearance)\n"
+            "3. Включите **«Режим разработчика»** (Developer Mode)\n"
+            "4. Удерживайте палец на своём имени\n"
+            "5. Выберите **«Копировать ID»**\n\n"
+            "**✅ Ваш ID:** `" + user_id + "`\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        ),
         color=discord.Color.gold()
     )
     view = PremiumDurationView(user_id)
