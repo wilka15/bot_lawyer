@@ -20,7 +20,7 @@ def run_web_server():
 # ===== НАСТРОЙКИ =====
 TOKEN = os.environ.get("DISCORD_TOKEN")
 if not TOKEN:
-    raise ValueError("❌ DISCORD_TOKEN не найден! Установи переменную окружения.")
+    raise ValueError("❌ DISCORD_TOKEN не найден!")
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -29,253 +29,128 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 laws = [
     {"article": "6.1", "title": "Умышленное нанесение побоев или иных насильственных действий", "penalty": "от 1 до 3 лет лишения свободы", "stars": "★★★", "note": ""},
     {"article": "6.2", "title": "Убийство (умышленное причинение смерти другому человеку)", "penalty": "от 2 до 4 лет лишения свободы", "stars": "★★★★", "note": ""},
-    {"article": "6.3", "title": "Тяжкое убийство (двух и более лиц, с особой жестокостью, группой лиц)", "penalty": "от 4 до 5 лет лишения свободы", "stars": "★★★★★", "note": ""},
+    {"article": "6.3", "title": "Тяжкое убийство", "penalty": "от 4 до 5 лет лишения свободы", "stars": "★★★★★", "note": ""},
     {"article": "6.4", "title": "Угроза убийством или причинением тяжкого вреда здоровью", "penalty": "от 2 до 3 лет лишения свободы, либо штраф $30.000-$50.000", "stars": "★★★", "note": ""},
     {"article": "7.1", "title": "Похищение человека", "penalty": "от 4 до 5 лет лишения свободы", "stars": "★★★★★", "note": ""},
-    {"article": "7.4", "title": "Клевета в публичном выступлении или СМИ", "penalty": "от 2 до 3 лет лишения свободы либо штраф $40.000-$80.000", "stars": "★★★", "note": ""},
+    {"article": "7.4", "title": "Клевета", "penalty": "от 2 до 3 лет лишения свободы либо штраф $40.000-$80.000", "stars": "★★★", "note": ""},
     {"article": "8.1", "title": "Изнасилование", "penalty": "от 3 до 4 лет лишения свободы", "stars": "★★★★", "note": ""},
     {"article": "10.1", "title": "Кража (тайное хищение чужого имущества)", "penalty": "от 2 до 3 лет лишения свободы", "stars": "★★★", "note": ""},
-    {"article": "10.2", "title": "Мошенничество (обман или злоупотребление доверием)", "penalty": "от 2 до 3 лет лишения свободы", "stars": "★★★", "note": ""},
+    {"article": "10.2", "title": "Мошенничество", "penalty": "от 2 до 3 лет лишения свободы", "stars": "★★★", "note": ""},
     {"article": "10.3", "title": "Грабеж (открытое хищение чужого имущества)", "penalty": "от 2 до 3 лет лишения свободы", "stars": "★★★", "note": ""},
-    {"article": "10.4", "title": "Разбой (нападение с насилием, опасным для жизни)", "penalty": "от 2 до 4 лет лишения свободы", "stars": "★★★★", "note": ""},
-    {"article": "10.5", "title": "Неправомерное завладение транспортным средством (угон)", "penalty": "от 1 до 3 лет лишения свободы", "stars": "★★★", "note": ""},
+    {"article": "10.4", "title": "Разбой", "penalty": "от 2 до 4 лет лишения свободы", "stars": "★★★★", "note": ""},
+    {"article": "10.5", "title": "Угон транспортного средства", "penalty": "от 1 до 3 лет лишения свободы", "stars": "★★★", "note": ""},
     {"article": "10.9", "title": "Незаконное проникновение в жилище", "penalty": "от 3 до 4 лет лишения свободы", "stars": "★★★★", "note": ""},
     {"article": "11.3", "title": "Уклонение от уплаты налогов", "penalty": "принудительное взыскание в 2-кратном размере + от 3 до 5 лет", "stars": "★★★★★", "note": ""},
-    {"article": "12.1", "title": "Терроризм (взрыв, поджог, устрашение населения)", "penalty": "от 4 до 5 лет лишения свободы", "stars": "★★★★★", "note": ""},
-    {"article": "12.8", "title": "Незаконное хранение оружия, спецсредств, боеприпасов", "penalty": "от 3 до 4 лет, либо штраф $20.000-$60.000", "stars": "★★★★", "note": ""},
+    {"article": "12.1", "title": "Терроризм", "penalty": "от 4 до 5 лет лишения свободы", "stars": "★★★★★", "note": ""},
+    {"article": "12.8", "title": "Незаконное хранение оружия", "penalty": "от 3 до 4 лет, либо штраф $20.000-$60.000", "stars": "★★★★", "note": ""},
     {"article": "12.14", "title": "Хулиганство", "penalty": "до 2 лет, либо штраф $30.000-$40.000", "stars": "★★", "note": ""},
-    {"article": "13.2", "title": "Сбыт, распространение наркотиков", "penalty": "от 3 до 5 лет лишения свободы", "stars": "★★★★★", "note": ""},
+    {"article": "13.2", "title": "Сбыт наркотиков", "penalty": "от 3 до 5 лет лишения свободы", "stars": "★★★★★", "note": ""},
     {"article": "13.3", "title": "Хранение наркотиков от 5 грамм", "penalty": "от 2 до 4 лет лишения свободы", "stars": "★★★★", "note": ""},
     {"article": "15.4", "title": "Получение взятки", "penalty": "от 4 до 5 лет лишения свободы", "stars": "★★★★★", "note": ""},
-    {"article": "15.5", "title": "Дача взятки должностному лицу", "penalty": "от 4 до 5 лет лишения свободы", "stars": "★★★★★", "note": ""},
-    {"article": "16.15", "title": "Уклонение от отбывания наказания (побег)", "penalty": "от 1 до 5 лет", "stars": "★..★★★★★", "note": "Добровольная явка — 1/2 наказания"},
-    {"article": "17.1", "title": "Посягательство на жизнь сотрудника правоохранительных органов", "penalty": "от 4 до 5 лет лишения свободы", "stars": "★★★★★", "note": ""},
-    {"article": "17.3", "title": "Оскорбление представителя власти при исполнении", "penalty": "от 1 до 3 лет, либо штраф $20.000-$50.000", "stars": "★★★", "note": ""},
-    {"article": "17.6", "title": "Неповиновение законному требованию", "penalty": "от 2 до 3 лет, либо штраф $20.000-$60.000", "stars": "★★★", "note": ""},
+    {"article": "15.5", "title": "Дача взятки", "penalty": "от 4 до 5 лет лишения свободы", "stars": "★★★★★", "note": ""},
+    {"article": "16.15", "title": "Побег из тюрьмы", "penalty": "от 1 до 5 лет", "stars": "★..★★★★★", "note": ""},
+    {"article": "17.1", "title": "Посягательство на жизнь полицейского", "penalty": "от 4 до 5 лет лишения свободы", "stars": "★★★★★", "note": ""},
+    {"article": "17.3", "title": "Оскорбление полицейского", "penalty": "от 1 до 3 лет, либо штраф $20.000-$50.000", "stars": "★★★", "note": ""},
     {"article": "19.1", "title": "Браконьерство", "penalty": "от 1 до 3 лет лишения свободы", "stars": "★★★", "note": ""},
 ]
 
-# ========== БАЗА ПК (расширенная для поиска) ==========
-procedural_rules = [
-    {"keyword": "права задержанного", "title": "Права задержанного", "text": """**Права задержанного (ст. 22 ПК)**:
-1️⃣ Право на адвоката
-2️⃣ Право сохранять молчание
-3️⃣ Право возбуждать ходатайства и заявлять отводы
-4️⃣ Право на конфиденциальную встречу с адвокатом (до 10 минут)
-5️⃣ Право на один телефонный звонок (до 3 минут)""", "tags": ["права", "задержанный", "задержание", "22"]},
-    
-    {"keyword": "задержание", "title": "Порядок задержания", "text": """**Порядок задержания (ст. 17 ПК)**:
-1. Надеть наручники на подозреваемого
-2. Представиться согласно ст. 36 ч.3
-3. Зачитать правило Миранды
-4. Провести первичный обыск (по желанию)
-5. Объяснить причину задержания
-6. Доставить в полицейский участок, департамент шерифа или штаб-квартиру FIB
-7. Досмотреть документы и проверить трудоустройство
-8. Сверить фоторобот
-9. Произвести следственные действия (допрос, экспертиза)
-10. Предложить реализацию прав
-11. Реализовать права задержанного
-
-⏰ **Срок задержания** — не более 1 часа (ст. 15 ПК)""", "tags": ["задержание", "арест", "задержать", "17"]},
-    
-    {"keyword": "обыск", "title": "Виды обыска", "text": """**Виды обыска по ПК (ст. 28-29)**:
-🔹 **Личный обыск** — только при задержании или аресте
-🔹 **Первичный обыск** — для обнаружения оружия, наркотиков, взрывчатки
-🔹 **Вторичный обыск** — при аресте, изымаются ВСЕ нелегальные предметы
-🚗 **Обыск транспортного средства** — только при ордере Car Search (CS)
-👁️ **Осмотр ТС** — визуальный осмотр при ориентировке или подозрении
-
-⚠️ Запрещено изымать предметы у госслужащих при первичном обыске""", "tags": ["обыск", "досмотр", "осмотр", "личный обыск", "28", "29"]},
-    
-    {"keyword": "освобождение", "title": "Основания освобождения", "text": """**Основания для освобождения подозреваемого (ст. 20 ПК)**:
-✅ Не подтвердилось подозрение в совершении правонарушения
-✅ За нарушение не предусмотрено наказание в виде лишения свободы
-✅ Задержание произведено с нарушением ст. 16 ПК
-✅ Прошло более 1 часа с момента задержания и не избрана мера наказания
-✅ Подозреваемый обладает статусом неприкосновенности
-✅ Задержание проводит неуполномоченный сотрудник (стажёр, гражданский)
-✅ Доказательства получены незаконным путём""", "tags": ["освобождение", "отпустить", "20"]},
-    
-    {"keyword": "обжалование", "title": "Порядок обжалования", "text": """**Порядок обжалования (ст. 9, 43-44 ПК)**:
-📌 **48 часов** с момента задержания или вынесения наказания
-📌 Жалоба подаётся:
-   → Руководителю ведомства (дисциплинарная ответственность)
-   → В Прокуратуру штата (прокурорская проверка)
-   → В суд (во время судебного производства)
-
-📌 Решение может быть отменено, сотрудник привлечён к ответственности""", "tags": ["обжалование", "жалоба", "пожаловаться", "9", "43", "44"]},
-    
-    {"keyword": "залог", "title": "Выход под залог", "text": """**Выход под залог (ст. 33 ПК)**:
-💰 Минимальная сумма: **$25.000**
-⭐ За каждый уровень розыска + $25.000 (например, 3 звезды = $25.000 + 3×$25.000 = $100.000)
-
-✔️ Залог доступен по статьям, не влекущим судимость (ст. 5.12 УК)""", "tags": ["залог", "выйти под залог", "деньги", "33"]},
-    
-    {"keyword": "миранда", "title": "Правило Миранды", "text": """**Правило Миранды (ст. 17 ПК)**:
-*"Вы имеете право хранить молчание. Всё, что Вы скажете, может быть и будет использовано против вас. Вы имеете право на адвоката. Частного или государственного. Вам ясны Ваши права?"*
-
-⚠️ Если права не зачитаны — показания считаются недопустимыми (ст. 12 ПК)""", "tags": ["миранда", "права", "зачитать права"]},
-    
-    {"keyword": "адвокат допрос", "title": "Адвокат на допросе", "text": """**Адвокат на допросе (ст. 56 ПК)**:
-✅ Адвокат присутствует при допросе и оказывает юридическую помощь
-✅ Имеет право один раз потребовать **5-минутный перерыв** для корректировки тактики
-✅ По окончании допроса вправе заявлять о нарушениях прав клиента
-⏰ Допрос не может длиться более 1 часа и проводиться в ночное время""", "tags": ["адвокат", "защитник", "допрос", "56"]},
-    
-    {"keyword": "видеофиксация", "title": "Видеофиксация", "text": """**Видеофиксация (ст. 31-32 ПК)**:
-📹 Сотрудник ОБЯЗАН вести видеозапись при пресечении правонарушения и при процессуальных действиях
-⏸️ Можно приостановить запись:
-   → На время реализации права на адвоката
-   → На разбирательство с прокурором/руководством (если задержан госслужащий)
-🗄️ Срок хранения: **48 часов**
-🚫 При подаче жалобы удалять записи ЗАПРЕЩЕНО""", "tags": ["видео", "запись", "фиксация", "камера", "31", "32"]},
-    
-    {"keyword": "госслужащий задержание", "title": "Задержание госслужащего", "text": """**Задержание государственного служащего (ст. 19 ПК)**:
-👮‍♂️ При задержании госслужащего сотрудник ОБЯЗАН уведомить:
-   → Руководство задержанного
-   → Прокуратуру штата
-⏰ На подтверждение — 10 минут. Срок задержания приостанавливается.
-🚨 Если прокурор не прибыл в течение 20 минут — задержанный ОСВОБОЖДАЕТСЯ.
-⚖️ При отсутствии состава — немедленное освобождение""", "tags": ["госслужащий", "сотрудник", "полицейский", "19"]},
-    
-    {"keyword": "стадии силы", "title": "Стадии применения силы", "text": """**Стадии применения силы (ст. 36 ПК)**:
-1️⃣ **Присутствие** — форма, знаки отличия, рука на кобуре
-2️⃣ **Приказ** — устное требование прекратить нарушение
-3️⃣ **Физическая сила** — заломы, удержание, дубинки, аэрозоли
-4️⃣ **Спецсредства** — наручники, электрошок, резиновые пули
-5️⃣ **Огнестрельное оружие** — только при угрозе жизни (предупредительные выстрелы ЗАПРЕЩЕНЫ)
-
-⚠️ Стадии соблюдаются строго по порядку, кроме случаев прямой угрозы жизни/здоровью""", "tags": ["сила", "оружие", "применение силы", "стрельба", "36"]},
-    
-    {"keyword": "недопустимые доказательства", "title": "Недопустимые доказательства", "text": """**Недопустимые доказательства (ст. 12 ПК)**:
-❌ Показания, полученные ДО зачитывания прав (даже с видео)
-❌ Показания, основанные на догадках, слухах
-❌ Улики, добытые незаконно (обыск без ордера, изъятие у неприкосновенных лиц)
-
-Такие доказательства не имеют юридической силы и не могут быть использованы для обвинения""", "tags": ["доказательства", "улики", "недопустимые", "12"]},
-    
-    {"keyword": "срок задержания", "title": "Срок задержания", "text": """**Срок задержания (ст. 15, 20 ПК)**:
-⏱️ Максимальный срок: **1 час**
-⏸️ Приостанавливается при:
-   → Допросе и экспертизе
-   → Вызове адвоката (до 10 минут ожидания)
-   → Вызове прокуратуры/руководства (если задержан госслужащий)
-   → Обыске имущества
-   → Просмотре видеофиксации (до +10-20 минут)
-
-⚠️ Если час прошёл, а наказание не назначено — подозреваемый подлежит ОСВОБОЖДЕНИЮ""", "tags": ["срок", "время", "час", "15", "20"]},
+# ========== БАЗА ПК (в том же формате, что и УК) ==========
+# Теперь ПК имеет ТУ ЖЕ СТРУКТУРУ, что и УК для одинакового поиска
+pk_laws = [
+    {"article": "15", "title": "Задержание (срок до 1 часа)", "penalty": "Задержание на срок до 1 часа", "stars": "⚖️", "note": "ст. 15 ПК"},
+    {"article": "16", "title": "Основания задержания", "penalty": "8 оснований: на месте преступления, следы, 3 свидетеля, фото/видео, ордер, требование прокурора, ориентировка, боло-розыск", "stars": "⚖️", "note": "ст. 16 ПК"},
+    {"article": "17", "title": "Порядок задержания", "penalty": "11 шагов: наручники → представиться → Миранда → обыск → объяснить причину → доставить в участок → проверить документы → сверить фоторобот → допрос → предложить права → реализовать права", "stars": "⚖️", "note": "ст. 17 ПК"},
+    {"article": "19", "title": "Задержание госслужащего", "penalty": "Уведомить руководство и прокуратуру. Если прокурор не приехал за 20 минут — освободить", "stars": "⚖️", "note": "ст. 19 ПК"},
+    {"article": "20", "title": "Освобождение подозреваемого", "penalty": "Основания: не подтвердилось, нет лишения свободы, нарушен порядок, прошёл час, неприкосновенность, неуполномоченный сотрудник, незаконные доказательства", "stars": "⚖️", "note": "ст. 20 ПК"},
+    {"article": "22", "title": "Права задержанного", "penalty": "Право на адвоката, право хранить молчание, право на ходатайства, право на встречу с адвокатом (10 мин), право на звонок (3 мин)", "stars": "⚖️", "note": "ст. 22 ПК"},
+    {"article": "28", "title": "Личный обыск", "penalty": "Только при задержании или аресте. Первичный — для оружия/наркотиков. Вторичный — при аресте, изымается всё", "stars": "⚖️", "note": "ст. 28 ПК"},
+    {"article": "29", "title": "Обыск ТС", "penalty": "Обыск — только с ордером CS. Осмотр — при ориентировке или подозрении", "stars": "⚖️", "note": "ст. 29 ПК"},
+    {"article": "31", "title": "Видеофиксация", "penalty": "Сотрудник ОБЯЗАН вести видеозапись. Можно приостановить на время вызова адвоката. Хранение 48 часов", "stars": "⚖️", "note": "ст. 31-32 ПК"},
+    {"article": "33", "title": "Залог", "penalty": "Минимум $25.000 + $25.000 за каждый уровень розыска", "stars": "💰", "note": "ст. 33 ПК"},
+    {"article": "36", "title": "Стадии применения силы", "penalty": "1️⃣ Присутствие 2️⃣ Приказ 3️⃣ Физ. сила 4️⃣ Спецсредства 5️⃣ Огнестрельное оружие", "stars": "💪", "note": "ст. 36 ПК"},
+    {"article": "9", "title": "Обжалование", "penalty": "48 часов на обжалование. Жалоба руководителю, в прокуратуру или суд", "stars": "📋", "note": "ст. 9, 43-44 ПК"},
+    {"article": "12", "title": "Недопустимые доказательства", "penalty": "Показания ДО прав, слухи, улики добытые незаконно", "stars": "🚫", "note": "ст. 12 ПК"},
+    {"article": "56", "title": "Адвокат на допросе", "penalty": "Присутствует, может требовать 5-минутный перерыв, вправе заявлять о нарушениях", "stars": "👨‍⚖️", "note": "ст. 56 ПК"},
+    {"article": "М7", "title": "Правило Миранды", "penalty": "«Вы имеете право хранить молчание. Всё, что скажете, может быть использовано против вас. Вы имеете право на адвоката»", "stars": "📢", "note": "Обязательно зачитать при задержании"},
 ]
 
-# ========== ПОИСК ПО УК ==========
-def search_uk(query: str):
-    """Умный поиск по УК"""
+# ========== УНИВЕРСАЛЬНЫЙ УМНЫЙ ПОИСК (для УК и ПК) ==========
+def smart_search(query: str, database: list, search_type: str = "uk"):
+    """
+    Универсальный умный поиск для любого кодекса
+    database: список статей с полями article, title, penalty, stars, note
+    """
     query_lower = query.lower().strip()
     found = []
     
-    # Поиск по номеру статьи
-    match_num = re.search(r'(\d{1,2}\.\d{1,2}(?:\.\d{1})?)', query_lower)
+    # 1. Поиск по номеру статьи (как 6.2 или 17)
+    match_num = re.search(r'(\d{1,2}(?:\.\d{1,2})?)', query_lower)
     if match_num:
         art_num = match_num.group(1)
-        for law in laws:
+        for law in database:
             if law["article"] == art_num:
                 return [law]
     
-    # Поиск по ключевым словам (группировка)
-    keywords_map = {
-        "убийств": ["6.2", "6.3"],
-        "побо": ["6.1"],
-        "угроз": ["6.4"],
-        "похищ": ["7.1"],
-        "клевет": ["7.4"],
-        "изнасилова": ["8.1"],
-        "краж": ["10.1"],
-        "мошенничеств": ["10.2"],
-        "вымогательств": ["10.2.1"],
-        "грабеж": ["10.3"],
-        "разбо": ["10.4"],
-        "угон": ["10.5", "10.5.1"],
-        "уничтожен": ["10.6", "10.7", "10.8"],
-        "проникновен": ["10.9", "12.7", "12.7.1", "12.7.2"],
-        "налог": ["11.3", "11.4"],
-        "терроризм": ["12.1", "12.1.1"],
-        "оруж": ["12.8", "12.8.1", "12.8.2", "12.9", "12.10"],
-        "наркотик": ["13.1", "13.2", "13.3", "13.4", "13.5"],
-        "взятк": ["15.4", "15.5", "15.5.1"],
-        "халатность": ["15.6"],
-        "ложн": ["16.8", "16.13", "16.13.1", "16.16"],
-        "побег": ["16.15"],
-        "насили": ["17.1", "17.2"],
-        "оскорблен": ["17.3", "17.9"],
-        "неповиновен": ["17.6"],
-        "браконьерств": ["19.1"],
-    }
+    # 2. Поиск по ключевым словам (с группировкой похожих статей)
+    if search_type == "uk":
+        keywords_map = {
+            "убийств": ["6.2", "6.3"], "побо": ["6.1"], "угроз": ["6.4"],
+            "краж": ["10.1"], "грабеж": ["10.3"], "разбо": ["10.4"],
+            "угон": ["10.5"], "оружи": ["12.8"], "наркотик": ["13.2", "13.3"],
+            "взятк": ["15.4", "15.5"], "побег": ["16.15"], "клевет": ["7.4"],
+            "похищ": ["7.1"], "изнасилова": ["8.1"], "хулиган": ["12.14"],
+            "браконьер": ["19.1"], "налог": ["11.3"]
+        }
+    else:  # search_type == "pk"
+        keywords_map = {
+            "прав": ["22"], "задержан": ["22", "16", "17", "15"], "арест": ["17", "16"],
+            "обыск": ["28", "29"], "досмотр": ["28"], "осмотр": ["29"],
+            "освобожден": ["20"], "отпуст": ["20"], "обжалован": ["9"], "жалоб": ["9"],
+            "залог": ["33"], "деньг": ["33"], "миранд": ["М7"], "сил": ["36"],
+            "оружие": ["36"], "стрельб": ["36"], "адвокат": ["56"], "защитник": ["56"],
+            "допрос": ["56"], "видео": ["31"], "запис": ["31"], "фиксац": ["31"],
+            "госслужащ": ["19"], "полицейск": ["19"], "доказательств": ["12"],
+            "улик": ["12"], "срок": ["15"], "время": ["15"], "час": ["15"]
+        }
     
-    for word, article_nums in keywords_map.items():
+    for word, articles in keywords_map.items():
         if word in query_lower:
-            for art_num in article_nums:
-                for law in laws:
-                    if law["article"] == art_num and law not in found:
+            for art in articles:
+                for law in database:
+                    if law["article"] == art and law not in found:
                         found.append(law)
             if found:
                 return found
     
-    # Поиск по названию
-    for law in laws:
+    # 3. Поиск по названию
+    for law in database:
         if law["title"].lower() in query_lower or query_lower in law["title"].lower():
-            found.append(law)
+            if law not in found:
+                found.append(law)
     
-    # Исправление опечаток
+    # 4. Поиск по примечанию (note) — полезно для ПК
+    for law in database:
+        if law["note"].lower() in query_lower or query_lower in law["note"].lower():
+            if law not in found:
+                found.append(law)
+    
+    # 5. Исправление опечаток (как в УК)
     if not found:
-        all_titles = [law["title"].lower() for law in laws]
-        matches = get_close_matches(query_lower, all_titles, n=3, cutoff=0.6)
-        for match in matches:
-            for law in laws:
-                if law["title"].lower() == match and law not in found:
-                    found.append(law)
-    
-    return found
-
-# ========== ПОИСК ПО ПК (аналогично УК) ==========
-def search_pk(query: str):
-    """Умный поиск по ПК"""
-    query_lower = query.lower().strip()
-    found = []
-    
-    # Поиск по ключевым словам и тегам
-    for rule in procedural_rules:
-        # Проверка по ключевому слову
-        if rule["keyword"] in query_lower:
-            found.append(rule)
-            continue
+        all_searchable = []
+        for law in database:
+            all_searchable.append(law["title"].lower())
+            all_searchable.append(law["article"].lower())
+            all_searchable.append(law["note"].lower())
         
-        # Проверка по тегам
-        for tag in rule["tags"]:
-            if tag in query_lower or query_lower in tag:
-                if rule not in found:
-                    found.append(rule)
-                    break
-        
-        # Проверка по названию
-        if rule["title"].lower() in query_lower or query_lower in rule["title"].lower():
-            if rule not in found:
-                found.append(rule)
-    
-    # Исправление опечаток
-    if not found:
-        all_keywords = [rule["keyword"] for rule in procedural_rules]
-        all_titles = [rule["title"].lower() for rule in procedural_rules]
-        all_tags = [tag for rule in procedural_rules for tag in rule["tags"]]
-        
-        matches = get_close_matches(query_lower, all_keywords + all_titles + all_tags, n=3, cutoff=0.5)
+        matches = get_close_matches(query_lower, all_searchable, n=3, cutoff=0.6)
         
         for match in matches:
-            for rule in procedural_rules:
-                if (match == rule["keyword"] or 
-                    match == rule["title"].lower() or 
-                    match in rule["tags"]):
-                    if rule not in found:
-                        found.append(rule)
+            for law in database:
+                if (match == law["title"].lower() or 
+                    match == law["article"].lower() or 
+                    match == law["note"].lower()):
+                    if law not in found:
+                        found.append(law)
     
     return found
 
@@ -284,7 +159,7 @@ def search_pk(query: str):
 async def on_ready():
     print(f"✅ Бот {bot.user} готов помогать адвокатам Majestic RP")
     print(f"📜 Загружено статей УК: {len(laws)}")
-    print(f"📚 Загружено тем ПК: {len(procedural_rules)}")
+    print(f"📚 Загружено статей ПК: {len(pk_laws)}")
     
     try:
         synced = await bot.tree.sync()
@@ -299,7 +174,7 @@ async def on_ready():
 @bot.command(name="ст", aliases=["ук", "статья"])
 async def uk_prefix(ctx, *, query: str):
     """!ст 6.2 или !ук убийство"""
-    results = search_uk(query)
+    results = smart_search(query, laws, "uk")
     
     if not results:
         await ctx.send(f"❌ Ничего не найдено по запросу `{query}`.\nПопробуйте `!справка`")
@@ -315,7 +190,11 @@ async def uk_prefix(ctx, *, query: str):
         return
     
     law = results[0]
-    embed = discord.Embed(title=f"⚖️ Статья {law['article']} УК SA", description=f"**{law['title']}**\n{law['stars']}", color=discord.Color.red())
+    embed = discord.Embed(
+        title=f"⚖️ Статья {law['article']} УК SA",
+        description=f"**{law['title']}**\n{law['stars']}",
+        color=discord.Color.red()
+    )
     embed.add_field(name="📝 Наказание", value=law['penalty'], inline=False)
     if law['note']:
         embed.add_field(name="📌 Примечание", value=law['note'], inline=False)
@@ -323,22 +202,31 @@ async def uk_prefix(ctx, *, query: str):
 
 @bot.command(name="пк", aliases=["процесс"])
 async def pk_prefix(ctx, *, query: str):
-    """!пк задержание — умный поиск по ПК"""
-    results = search_pk(query)
+    """!пк задержание — умный поиск по ПК (работает как УК)"""
+    results = smart_search(query, pk_laws, "pk")
     
     if not results:
-        await ctx.send(f"❌ Ничего не найдено по запросу `{query}`.\nДоступные темы: права, задержание, обыск, освобождение, обжалование, залог, миранда, адвокат, видео, госслужащий, сила, недопустимые доказательства, срок задержания")
+        await ctx.send(f"❌ Ничего не найдено по запросу `{query}`.\nДоступные темы ПК: права, задержание, обыск, освобождение, обжалование, залог, миранда, адвокат, видео, госслужащий, сила, доказательства, срок")
         return
     
     if len(results) > 1:
-        embed = discord.Embed(title=f"🔍 Найдено {len(results)} тем ПК", color=discord.Color.green())
-        for rule in results[:5]:
-            embed.add_field(name=f"📌 {rule['title']}", value=f"`!пк {rule['keyword']}` или `/пк {rule['keyword']}`", inline=False)
+        embed = discord.Embed(title=f"🔍 Найдено {len(results)} статей ПК", color=discord.Color.green())
+        for law in results[:5]:
+            embed.add_field(name=f"**Ст. {law['article']}** {law['stars']}", value=law['title'][:60], inline=False)
+        if len(results) > 5:
+            embed.set_footer(text=f"И ещё {len(results)-5} статей... уточните запрос")
         await ctx.send(embed=embed)
         return
     
-    rule = results[0]
-    embed = discord.Embed(title=f"📜 {rule['title']}", description=rule['text'], color=discord.Color.green())
+    law = results[0]
+    embed = discord.Embed(
+        title=f"📜 Статья {law['article']} ПК SA",
+        description=f"**{law['title']}**\n{law['stars']}",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="📝 Содержание", value=law['penalty'], inline=False)
+    if law['note']:
+        embed.add_field(name="📌 Источник", value=law['note'], inline=False)
     await ctx.send(embed=embed)
 
 # Быстрые префиксные команды ПК
@@ -386,6 +274,10 @@ async def gov_prefix(ctx):
 async def force_prefix(ctx):
     await pk_prefix(ctx, query="сила")
 
+@bot.command(name="доказательства")
+async def evidence_prefix(ctx):
+    await pk_prefix(ctx, query="доказательства")
+
 @bot.command(name="справка")
 async def help_prefix(ctx):
     await help_slash(ctx)
@@ -395,7 +287,7 @@ async def help_prefix(ctx):
 @app_commands.describe(query="Номер статьи (6.2) или название преступления (убийство)")
 async def uk_slash(interaction: discord.Interaction, query: str):
     await interaction.response.defer()
-    results = search_uk(query)
+    results = smart_search(query, laws, "uk")
     
     if not results:
         await interaction.followup.send(f"❌ Ничего не найдено по запросу `{query}`")
@@ -409,127 +301,71 @@ async def uk_slash(interaction: discord.Interaction, query: str):
         return
     
     law = results[0]
-    embed = discord.Embed(title=f"⚖️ Статья {law['article']} УК SA", description=f"**{law['title']}**\n{law['stars']}", color=discord.Color.red())
+    embed = discord.Embed(
+        title=f"⚖️ Статья {law['article']} УК SA",
+        description=f"**{law['title']}**\n{law['stars']}",
+        color=discord.Color.red()
+    )
     embed.add_field(name="📝 Наказание", value=law['penalty'], inline=False)
     if law['note']:
         embed.add_field(name="📌 Примечание", value=law['note'], inline=False)
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="пк", description="Умный поиск по Процессуальному кодексу")
-@app_commands.describe(query="Тема: права, задержание, обыск, освобождение, обжалование, залог, миранда, адвокат, видео, госслужащий, сила, доказательства, срок")
+@bot.tree.command(name="пк", description="Умный поиск по Процессуальному кодексу (работает как УК)")
+@app_commands.describe(query="Номер статьи (17) или тема (задержание, права, обыск)")
 async def pk_slash(interaction: discord.Interaction, query: str):
     await interaction.response.defer()
-    results = search_pk(query)
+    results = smart_search(query, pk_laws, "pk")
     
     if not results:
-        await interaction.followup.send(f"❌ Ничего не найдено по запросу `{query}`")
+        await interaction.followup.send(f"❌ Ничего не найдено по запросу `{query}`\nПримеры: `/пк задержание`, `/пк права`, `/пк 17`")
         return
     
     if len(results) > 1:
-        embed = discord.Embed(title=f"🔍 Найдено {len(results)} тем ПК", color=discord.Color.green())
-        for rule in results[:5]:
-            embed.add_field(name=f"📌 {rule['title']}", value=f"`/пк {rule['keyword']}`", inline=False)
+        embed = discord.Embed(title=f"🔍 Найдено {len(results)} статей ПК", color=discord.Color.green())
+        for law in results[:5]:
+            embed.add_field(name=f"**Ст. {law['article']}** {law['stars']}", value=law['title'][:60], inline=False)
         await interaction.followup.send(embed=embed)
         return
     
-    rule = results[0]
-    embed = discord.Embed(title=f"📜 {rule['title']}", description=rule['text'], color=discord.Color.green())
+    law = results[0]
+    embed = discord.Embed(
+        title=f"📜 Статья {law['article']} ПК SA",
+        description=f"**{law['title']}**\n{law['stars']}",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="📝 Содержание", value=law['penalty'], inline=False)
+    if law['note']:
+        embed.add_field(name="📌 Источник", value=law['note'], inline=False)
     await interaction.followup.send(embed=embed)
 
-# Отдельные слэш-команды для каждой темы ПК
+# Отдельные слэш-команды для быстрого доступа
 @bot.tree.command(name="права", description="Права задержанного (ст. 22 ПК)")
 async def rights_slash(interaction: discord.Interaction):
     await interaction.response.defer()
-    results = search_pk("права")
+    results = smart_search("права", pk_laws, "pk")
     if results:
-        embed = discord.Embed(title=f"📜 {results[0]['title']}", description=results[0]['text'], color=discord.Color.green())
+        law = results[0]
+        embed = discord.Embed(title=f"📜 Ст. {law['article']} ПК", description=f"**{law['title']}**\n{law['stars']}", color=discord.Color.green())
+        embed.add_field(name="📝 Содержание", value=law['penalty'], inline=False)
         await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="задержание", description="Порядок задержания (ст. 17 ПК)")
 async def arrest_slash(interaction: discord.Interaction):
     await interaction.response.defer()
-    results = search_pk("задержание")
+    results = smart_search("задержание", pk_laws, "pk")
     if results:
-        embed = discord.Embed(title=f"📜 {results[0]['title']}", description=results[0]['text'], color=discord.Color.green())
-        await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="обыск", description="Виды обыска (ст. 28-29 ПК)")
-async def search_slash(interaction: discord.Interaction):
-    await interaction.response.defer()
-    results = search_pk("обыск")
-    if results:
-        embed = discord.Embed(title=f"📜 {results[0]['title']}", description=results[0]['text'], color=discord.Color.green())
-        await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="освобождение", description="Основания для освобождения (ст. 20 ПК)")
-async def release_slash(interaction: discord.Interaction):
-    await interaction.response.defer()
-    results = search_pk("освобождение")
-    if results:
-        embed = discord.Embed(title=f"📜 {results[0]['title']}", description=results[0]['text'], color=discord.Color.green())
-        await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="обжалование", description="Порядок обжалования (ст. 9, 43-44 ПК)")
-async def appeal_slash(interaction: discord.Interaction):
-    await interaction.response.defer()
-    results = search_pk("обжалование")
-    if results:
-        embed = discord.Embed(title=f"📜 {results[0]['title']}", description=results[0]['text'], color=discord.Color.green())
-        await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="залог", description="Выход под залог (ст. 33 ПК)")
-async def bail_slash(interaction: discord.Interaction):
-    await interaction.response.defer()
-    results = search_pk("залог")
-    if results:
-        embed = discord.Embed(title=f"📜 {results[0]['title']}", description=results[0]['text'], color=discord.Color.green())
-        await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="миранда", description="Правило Миранды")
-async def miranda_slash(interaction: discord.Interaction):
-    await interaction.response.defer()
-    results = search_pk("миранда")
-    if results:
-        embed = discord.Embed(title=f"📜 {results[0]['title']}", description=results[0]['text'], color=discord.Color.green())
-        await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="адвокат", description="Права адвоката на допросе (ст. 56 ПК)")
-async def lawyer_slash(interaction: discord.Interaction):
-    await interaction.response.defer()
-    results = search_pk("адвокат")
-    if results:
-        embed = discord.Embed(title=f"📜 {results[0]['title']}", description=results[0]['text'], color=discord.Color.green())
-        await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="видео", description="Видеофиксация (ст. 31-32 ПК)")
-async def video_slash(interaction: discord.Interaction):
-    await interaction.response.defer()
-    results = search_pk("видео")
-    if results:
-        embed = discord.Embed(title=f"📜 {results[0]['title']}", description=results[0]['text'], color=discord.Color.green())
-        await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="госслужащий", description="Задержание госслужащего (ст. 19 ПК)")
-async def gov_slash(interaction: discord.Interaction):
-    await interaction.response.defer()
-    results = search_pk("госслужащий")
-    if results:
-        embed = discord.Embed(title=f"📜 {results[0]['title']}", description=results[0]['text'], color=discord.Color.green())
-        await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="сила", description="Стадии применения силы (ст. 36 ПК)")
-async def force_slash(interaction: discord.Interaction):
-    await interaction.response.defer()
-    results = search_pk("сила")
-    if results:
-        embed = discord.Embed(title=f"📜 {results[0]['title']}", description=results[0]['text'], color=discord.Color.green())
+        law = results[0]
+        embed = discord.Embed(title=f"📜 Ст. {law['article']} ПК", description=f"**{law['title']}**\n{law['stars']}", color=discord.Color.green())
+        embed.add_field(name="📝 Содержание", value=law['penalty'], inline=False)
         await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="справка", description="Показать список всех команд")
 async def help_slash(interaction: discord.Interaction):
     embed = discord.Embed(title="📚 Помощь адвоката Majestic RP", color=discord.Color.gold())
-    embed.add_field(name="⚖️ УК", value="🔹 `/ук убийство` или `/ук 6.2`\n🔹 `!ук убийство` или `!ст 6.2`\n🔹 Исправляет опечатки и показывает несколько вариантов", inline=False)
-    embed.add_field(name="📜 ПК", value="🔹 `/пк задержание` или `!пк задержание`\n🔹 `/права`, `/задержание`, `/обыск`, `/освобождение`\n🔹 `/обжалование`, `/залог`, `/миранда`, `/адвокат`\n🔹 `/видео`, `/госслужащий`, `/сила`\n🔹 Работает так же умно, как и УК!", inline=False)
+    embed.add_field(name="⚖️ УК", value="`/ук убийство` или `/ук 6.2`\n`!ук убийство` или `!ст 6.2`\n🔹 **Исправляет опечатки!** 🔹", inline=False)
+    embed.add_field(name="📜 ПК (ТОЧНО КАК УК)", value="`/пк задержание` или `/пк 17`\n`/пк права`, `/пк обыск`, `/пк освобождение`\n`/пк обжалование`, `/пк залог`, `/пк миранда`\n`/пк адвокат`, `/пк видео`, `/пк госслужащий`\n`/пк сила`, `/пк доказательства`, `/пк срок`\n🔹 **Работает с опечатками!** 🔹\n🔹 **Можно искать по номеру статьи!** 🔹", inline=False)
+    embed.set_footer(text="Бот полностью готов к работе в Majestic RP")
     await interaction.response.send_message(embed=embed)
 
 # ЗАПУСК
