@@ -7,10 +7,12 @@ import os
 import json
 import hashlib
 import asyncio
+import requests
+import socketio
 from datetime import datetime, timedelta
 from difflib import get_close_matches
 from threading import Thread
-from flask import Flask
+from flask import Flask, request, jsonify
 import google.generativeai as genai
 
 # ===== ВЕБ-СЕРВЕР =====
@@ -20,12 +22,35 @@ app = Flask(__name__)
 def health_check():
     return "✅ Bot is alive!", 200
 
+@app.route('/api/stats')
+def api_stats():
+    data = load_data()
+    stats = get_premium_stats()
+    
+    total_requests = 0
+    current_month = datetime.now().strftime("%Y-%m")
+    for user_id, info in data.items():
+        if info.get("month") == current_month:
+            total_requests += info.get("requests", 0)
+    
+    return jsonify({
+        "total_users": stats['total_users'],
+        "active_premium": stats['active_premium'],
+        "total_requests": total_requests,
+        "month": stats['month'],
+        "uk_articles": len(uk_laws),
+        "pk_articles": len(pk_laws),
+        "status": "online",
+        "uptime": "24/7"
+    })
+
 def run_web_server():
     app.run(host='0.0.0.0', port=8080)
 
 # ===== НАСТРОЙКИ =====
 TOKEN = os.environ.get("DISCORD_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+DA_WIDGET_TOKEN = os.environ.get("DA_WIDGET_TOKEN")  # Токен виджета DonationAlerts
 
 if not TOKEN:
     print("❌ ОШИБКА: DISCORD_TOKEN не найден!")
@@ -41,12 +66,72 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ===== ID ВЛАДЕЛЬЦА БОТА =====
-OWNER_ID = 920268444983775252  
+OWNER_ID = 920268444983775252  # ⚠️ ЗАМЕНИТЕ НА ВАШ DISCORD ID!
 
 def is_owner(interaction: discord.Interaction) -> bool:
     return interaction.user.id == OWNER_ID
 
-# ========== СИСТЕМА ПОДПИСКИ С ПАМЯТЬЮ ==========
+# ========== WebSocket ДЛЯ DONATIONALERTS ==========
+sio = socketio.Client()
+
+@sio.event
+def connect():
+    print("✅ WebSocket: Подключено к DonationAlerts")
+    if DA_WIDGET_TOKEN:
+        sio.emit('add-user', {
+            'token': DA_WIDGET_TOKEN,
+            'type': 'minor'
+        })
+        print("✅ WebSocket: Отправлен токен виджета")
+
+@sio.event
+def donation(data):
+    """Обработка нового доната"""
+    try:
+        amount = float(data.get('amount', 0))
+        currency = data.get('currency', 'RUB')
+        username = data.get('username', 'Unknown')
+        message = data.get('message', '')
+        
+        print(f"💰 Получен донат: {amount} {currency} от {username}")
+        print(f"📝 Сообщение: {message}")
+        
+        if amount >= 55:
+            # Ищем Discord ID в сообщении
+            match = re.search(r'!премиум\s+(\d{17,19})', message)
+            if match:
+                discord_id = match.group(1)
+                add_premium(discord_id, 30)
+                print(f"✅ Автоматически выдан премиум {discord_id} (оплачено {amount} {currency})")
+            else:
+                print(f"⚠️ Не найден Discord ID в сообщении: {message}")
+        else:
+            print(f"⚠️ Сумма {amount} меньше минимальной (55)")
+    except Exception as e:
+        print(f"❌ Ошибка обработки доната: {e}")
+
+@sio.event
+def disconnect():
+    print("❌ WebSocket: Отключено от DonationAlerts. Переподключение через 5 секунд...")
+    asyncio.create_task(reconnect_websocket())
+
+async def reconnect_websocket():
+    await asyncio.sleep(5)
+    if DA_WIDGET_TOKEN:
+        try:
+            sio.connect('https://socket.donationalerts.ru:3001')
+        except:
+            print("❌ Ошибка переподключения WebSocket")
+
+def start_websocket():
+    """Запускает WebSocket-соединение в отдельном потоке"""
+    if DA_WIDGET_TOKEN:
+        try:
+            sio.connect('https://socket.donationalerts.ru:3001')
+        except Exception as e:
+            print(f"❌ Ошибка подключения WebSocket: {e}")
+
+# ========== СИСТЕМА ПОДПИСКИ ==========
 DATA_FILE = "premium_users.json"
 
 def load_data():
@@ -71,7 +156,7 @@ def cleanup_expired():
             if expire_date <= now:
                 data[user_id]["premium_until"] = None
                 changed = True
-                print(f"⏰ Подписка пользователя {user_id} истекла {expire_date.strftime('%Y-%m-%d')}")
+                print(f"⏰ Подписка пользователя {user_id} истекла")
     
     if changed:
         save_data(data)
@@ -133,7 +218,7 @@ def add_premium(user_id: str, days: int):
     
     data[user_id]["premium_until"] = new_expiry.isoformat()
     save_data(data)
-    print(f"💎 Премиум выдан/продлён {user_id} на {days} дней до {new_expiry.strftime('%Y-%m-%d')}")
+    print(f"💎 Премиум выдан {user_id} на {days} дней до {new_expiry.strftime('%Y-%m-%d')}")
     return new_expiry
 
 def get_premium_expiry(user_id: str) -> str:
@@ -187,7 +272,6 @@ def get_premium_stats() -> dict:
     data = load_data()
     total_users = len(data)
     active_premium = 0
-    current_month = datetime.now().strftime("%Y-%m")
     now = datetime.now()
     
     for user_id, info in data.items():
@@ -200,7 +284,7 @@ def get_premium_stats() -> dict:
     return {
         "total_users": total_users,
         "active_premium": active_premium,
-        "month": current_month
+        "month": datetime.now().strftime("%Y-%m")
     }
 
 # ========== РЕФЕРАЛЬНАЯ СИСТЕМА ==========
@@ -217,17 +301,13 @@ def save_ref_data(data):
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 def generate_ref_code(user_id: str) -> str:
-    hash_obj = hashlib.md5(f"{user_id}{OWNER_ID}".encode())
-    return hash_obj.hexdigest()[:8].upper()
+    return hashlib.md5(f"{user_id}{OWNER_ID}".encode()).hexdigest()[:8].upper()
 
 def get_user_ref_code(user_id: str) -> str:
     data = load_ref_data()
-    
     if user_id not in data["codes"]:
-        code = generate_ref_code(user_id)
-        data["codes"][user_id] = code
+        data["codes"][user_id] = generate_ref_code(user_id)
         save_ref_data(data)
-    
     return data["codes"][user_id]
 
 def get_user_by_ref_code(code: str) -> str:
@@ -239,7 +319,6 @@ def get_user_by_ref_code(code: str) -> str:
 
 def add_referral(referred_id: str, referrer_id: str) -> bool:
     data = load_ref_data()
-    
     if referred_id in data["used"]:
         return False
     
@@ -251,7 +330,6 @@ def add_referral(referred_id: str, referrer_id: str) -> bool:
     
     add_bonus_requests(referred_id, 5)
     add_premium(referrer_id, 14)
-    
     return True
 
 def get_referral_stats(user_id: str) -> dict:
@@ -290,20 +368,20 @@ class PremiumDurationView(View):
     
     async def process_payment(self, interaction: discord.Interaction, days: int, price: int):
         user_id = str(interaction.user.id)
-        
         embed = discord.Embed(
             title=f"💎 Подписка на {days} дней — {price} ₽",
             description=(
                 f"🔥 **Что даёт премиум:**\n"
-                f"• Безлимитные запросы к боту\n"
+                f"• Безлимитные запросы\n"
                 f"• Приоритетная поддержка\n\n"
                 f"💳 **Как оплатить:**\n"
-                f"1. Переведите **{price} ₽** на карту [ 2200 2492 0252 2980 ]\n"
-                f"2. **В комментарии к переводу укажите:**\n"
+                f"1. Перейдите по ссылке: [DonationAlerts](https://www.donationalerts.com/r/wilka_wilkovich)\n"
+                f"2. Выберите сумму **{price} ₽**\n"
+                f"3. **В комментарии укажите ваш Discord ID:**\n"
                 f"   `!премиум {user_id} {days}`\n"
-                f"3. После оплаты напишите боту в ЛС:\n"
-                f"   `/активировать {user_id} {days}`\n\n"
-                f"📌 **Проверить статус:** `/premium_status`"
+                f"4. После оплаты бот **автоматически** выдаст премиум!\n\n"
+                f"📌 **Проверить статус:** `/premium_status`\n"
+                f"🌟 **Рефералы:** `/реф`"
             ),
             color=discord.Color.gold()
         )
@@ -437,13 +515,19 @@ async def on_ready():
     cleanup_expired()
     
     stats = get_premium_stats()
-    premium_users = get_all_premium_users()
-    
     print(f"✅ Бот {bot.user} готов!")
     print(f"📜 УК: {len(uk_laws)} статей | ПК: {len(pk_laws)} статей")
-    print(f"💎 Бесплатно: 5 пробных запросов + бонусы от рефералов | Премиум: от 55 ₽")
-    print(f"👑 Владелец бота: {OWNER_ID}")
-    print(f"📊 Статистика: {stats['total_users']} пользователей, {stats['active_premium']} активных подписок")
+    print(f"💎 Бесплатно: 5 + бонусы | Премиум: от 55 ₽")
+    print(f"📊 Статистика: {stats['total_users']} пользователей, {stats['active_premium']} активных")
+    
+    if DA_WIDGET_TOKEN:
+        print(f"🔗 DonationAlerts WebSocket настроен (автоматическая выдача)")
+        # Запускаем WebSocket в отдельном потоке
+        ws_thread = Thread(target=start_websocket, daemon=True)
+        ws_thread.start()
+    else:
+        print(f"⚠️ DonationAlerts WebSocket не настроен (ручная выдача)")
+        print(f"   Добавьте переменную DA_WIDGET_TOKEN в Render")
     
     try:
         synced = await bot.tree.sync()
@@ -459,25 +543,16 @@ async def on_ready():
 @bot.tree.command(name="купить", description="Купить премиум (выберите срок)")
 async def buy_premium(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
-    
     embed = discord.Embed(
         title="💎 Выберите срок подписки",
         description=(
             "Нажмите на кнопку с нужным сроком:\n\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "**📌 Как получить свой Discord ID:**\n"
+            "**📌 Ваш Discord ID:** `" + user_id + "`\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "**🖥️ На компьютере:**\n"
-            "1. Нажмите на шестерёнку (⚙️) рядом с вашим именем\n"
-            "2. Выберите **«Дополнительно»**\n"
-            "3. Включите **«Режим разработчика»**\n"
-            "4. ПКМ по своему имени → **«Копировать ID»**\n\n"
-            "**📱 На телефоне:**\n"
-            "1. Нажмите на аватарку → **«Внешний вид»**\n"
-            "2. Включите **«Режим разработчика»**\n"
-            "3. Удерживайте палец на своём имени → **«Копировать ID»**\n\n"
-            "**✅ Ваш ID:** `" + user_id + "`\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            "**Как получить ID:**\n"
+            "• ПК: Настройки → Дополнительно → Режим разработчика → ПКМ по имени → Копировать ID\n"
+            "• Телефон: Настройки → Внешний вид → Режим разработчика → Удерживать палец на имени → Копировать ID"
         ),
         color=discord.Color.gold()
     )
@@ -490,96 +565,72 @@ async def activate_premium(interaction: discord.Interaction, id: str, days: int 
     user_id = str(interaction.user.id)
     
     if id != user_id:
-        embed = discord.Embed(title="❌ Ошибка!", description="Вы указали чужой Discord ID.", color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message("❌ Вы указали чужой ID!", ephemeral=True)
         return
     
     valid_days = [30, 60, 90, 180, 365]
     if days not in valid_days:
-        embed = discord.Embed(title="❌ Неверный срок", description=f"Выберите: {', '.join(str(d) for d in valid_days)} дней", color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(f"❌ Выберите: {', '.join(map(str, valid_days))} дней", ephemeral=True)
         return
     
     price = days * 55 // 30
-    
     owner = await bot.fetch_user(OWNER_ID)
     if owner:
-        embed_owner = discord.Embed(
-            title="🆕 Запрос на активацию премиума!",
-            description=f"**Пользователь:** {interaction.user.mention}\n**ID:** `{user_id}`\n**Срок:** `{days} дней`\n**Сумма:** `{price} ₽`",
+        embed = discord.Embed(
+            title="🆕 Запрос на активацию!",
+            description=f"**Пользователь:** {interaction.user.mention}\n**Срок:** {days} дней\n**Сумма:** {price} ₽",
             color=discord.Color.orange(),
             timestamp=datetime.now()
         )
-        await owner.send(embed=embed_owner)
-        await owner.send(f"✅ Выдайте премиум: `/give_premium {user_id} {days}`")
+        await owner.send(embed=embed)
+        await owner.send(f"✅ Выдайте: `/give_premium {user_id} {days}`")
     
-    embed = discord.Embed(
-        title="✅ Запрос отправлен!",
-        description=f"Запрос на {days} дней отправлен владельцу.\nСумма: {price} ₽\n\nСтатус: `/premium_status`",
-        color=discord.Color.green()
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(f"✅ Запрос на {days} дней отправлен!", ephemeral=True)
 
 @bot.tree.command(name="give_premium", description="[АДМИН] Выдать премиум")
 @app_commands.describe(user="Пользователь", days="Количество дней")
 async def give_premium(interaction: discord.Interaction, user: discord.User, days: int = 30):
     if not (is_owner(interaction) or interaction.user.guild_permissions.administrator):
-        embed = discord.Embed(title="❌ Нет прав!", color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message("❌ Нет прав!", ephemeral=True)
         return
     
     new_expiry = add_premium(str(user.id), days)
-    embed = discord.Embed(
-        title="✅ Премиум выдан!",
-        description=f"{user.mention} получил премиум на **{days}** дней.\n📅 Действует до: {new_expiry.strftime('%d.%m.%Y')}",
-        color=discord.Color.green()
-    )
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(f"✅ {user.mention} получил премиум на {days} дней!\n📅 До: {new_expiry.strftime('%d.%m.%Y')}")
 
-@bot.tree.command(name="premium_list", description="[АДМИН] Показать список активных подписок")
+@bot.tree.command(name="premium_list", description="[АДМИН] Список активных подписок")
 async def premium_list(interaction: discord.Interaction):
     if not (is_owner(interaction) or interaction.user.guild_permissions.administrator):
-        embed = discord.Embed(title="❌ Нет прав!", color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message("❌ Нет прав!", ephemeral=True)
         return
     
-    premium_users = get_all_premium_users()
-    
-    if not premium_users:
-        embed = discord.Embed(title="💎 Активные подписки", description="Нет активных подписок.", color=discord.Color.orange())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    users = get_all_premium_users()
+    if not users:
+        await interaction.response.send_message("Нет активных подписок.", ephemeral=True)
         return
     
-    embed = discord.Embed(title=f"💎 Активные подписки ({len(premium_users)})", color=discord.Color.green(), timestamp=datetime.now())
-    
-    for pu in premium_users[:20]:
+    embed = discord.Embed(title=f"💎 Активные подписки ({len(users)})", color=discord.Color.green())
+    for u in users[:20]:
         try:
-            user = await bot.fetch_user(int(pu["id"]))
+            user = await bot.fetch_user(int(u["id"]))
             name = user.name
         except:
-            name = f"ID: {pu['id']}"
-        
-        days_left = (pu["expires_date"] - datetime.now()).days
-        embed.add_field(name=f"👤 {name}", value=f"📅 До: {pu['expires_date'].strftime('%d.%m.%Y')}\n⏰ Осталось: {days_left} дней\n🆔 `{pu['id']}`", inline=False)
+            name = f"ID: {u['id']}"
+        days_left = (u["expires_date"] - datetime.now()).days
+        embed.add_field(name=name, value=f"До: {u['expires_date'].strftime('%d.%m.%Y')} ({days_left} дн.)", inline=False)
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="premium_stats", description="[АДМИН] Статистика подписок")
+@bot.tree.command(name="premium_stats", description="[АДМИН] Статистика")
 async def premium_stats(interaction: discord.Interaction):
     if not (is_owner(interaction) or interaction.user.guild_permissions.administrator):
-        embed = discord.Embed(title="❌ Нет прав!", color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message("❌ Нет прав!", ephemeral=True)
         return
     
     stats = get_premium_stats()
-    premium_users = get_all_premium_users()
-    
-    embed = discord.Embed(title="📊 Статистика подписок", color=discord.Color.blue(), timestamp=datetime.now())
-    embed.add_field(name="👥 Всего пользователей", value=str(stats['total_users']), inline=True)
-    embed.add_field(name="💎 Активных подписок", value=str(stats['active_premium']), inline=True)
-    embed.add_field(name="📅 Текущий месяц", value=stats['month'], inline=True)
-    
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(
+        f"📊 **Статистика**\n👥 Всего: {stats['total_users']}\n💎 Активных: {stats['active_premium']}\n📅 Месяц: {stats['month']}",
+        ephemeral=True
+    )
 
 @bot.tree.command(name="premium_status", description="Проверить статус подписки")
 async def premium_status(interaction: discord.Interaction):
@@ -587,143 +638,29 @@ async def premium_status(interaction: discord.Interaction):
     premium = is_premium(user_id)
     used = get_user_requests(user_id)
     bonus = get_bonus_requests(user_id)
-    total_free = 5 + bonus
-    remaining = total_free - used
+    total = 5 + bonus
+    remaining = total - used
     
     if premium:
         expire = get_premium_expiry(user_id)
         expire_date = datetime.fromisoformat(expire)
-        days_left = (expire_date - datetime.now()).days
-        embed = discord.Embed(
-            title="💎 Статус подписки",
-            description=f"✅ Премиум **активен**\n📅 Действует до: {expire_date.strftime('%d.%m.%Y')}\n⏰ Осталось: {days_left} дней\n📊 Пробных запросов: {used}/{total_free}",
-            color=discord.Color.green()
+        await interaction.response.send_message(
+            f"💎 **Премиум активен**\n📅 До: {expire_date.strftime('%d.%m.%Y')}\n📊 Запросов: {used}/{total}",
+            ephemeral=True
         )
     else:
-        embed = discord.Embed(
-            title="💎 Статус подписки",
-            description=f"❌ Премиум **не активен**\n\n📊 Пробных запросов: {used}/{total_free} осталось {remaining}\n🎁 Бонусных от рефералов: +{bonus}\n💰 Премиум: `/купить`\n🌟 Рефералы: `/реф`",
-            color=discord.Color.orange()
+        await interaction.response.send_message(
+            f"❌ **Премиум не активен**\n📊 Запросов: {used}/{total} осталось {remaining}\n🎁 Бонусов: +{bonus}\n💰 Купить: `/купить`\n🌟 Рефералы: `/реф`",
+            ephemeral=True
         )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# ========== РЕФЕРАЛЬНЫЕ КОМАНДЫ ==========
-
-@bot.tree.command(name="реф", description="Реферальная программа")
-async def ref_menu(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    code = get_user_ref_code(user_id)
-    
-    embed = discord.Embed(
-        title="🌟 Реферальная программа",
-        description=(
-            f"**Ваш код:** `{code}`\n\n"
-            "**Как это работает:**\n"
-            "1. Поделитесь кодом с друзьями\n"
-            "2. Друг активирует код: `/активировать_код КОД`\n\n"
-            "**Награды:**\n"
-            "🎁 **Приглашённый:** +5 пробных запросов\n"
-            "👑 **Пригласивший:** +14 дней премиума\n\n"
-            "**Команды:**\n"
-            "• `/код` — показать свой код\n"
-            "• `/активировать_код КОД` — активировать код друга\n"
-            "• `/статистика` — ваша статистика"
-        ),
-        color=discord.Color.gold()
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@bot.tree.command(name="код", description="[РЕФ] Показать свой реферальный код")
-async def ref_code(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    code = get_user_ref_code(user_id)
-    
-    embed = discord.Embed(
-        title="🔑 Ваш реферальный код",
-        description=f"`{code}`\n\nПоделитесь кодом с друзьями!\n\nКогда друг активирует код через `/активировать_код {code}`, вы получите **+14 дней премиума**, а друг **+5 пробных запросов**.",
-        color=discord.Color.blue()
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@bot.tree.command(name="активировать_код", description="[РЕФ] Активировать реферальный код друга")
-@app_commands.describe(code="Реферальный код (8 символов)")
-async def ref_activate(interaction: discord.Interaction, code: str):
-    user_id = str(interaction.user.id)
-    
-    own_code = get_user_ref_code(user_id)
-    if code.upper() == own_code:
-        embed = discord.Embed(title="❌ Ошибка!", description="Нельзя активировать свой собственный код.", color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        return
-    
-    referrer_id = get_user_by_ref_code(code)
-    if not referrer_id:
-        embed = discord.Embed(title="❌ Код не найден!", description=f"Код `{code}` не существует.", color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        return
-    
-    success = add_referral(user_id, referrer_id)
-    
-    if not success:
-        embed = discord.Embed(title="❌ Ошибка!", description="Вы уже активировали чей-то код ранее.", color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        return
-    
-    try:
-        referrer_user = await bot.fetch_user(int(referrer_id))
-        referrer_name = referrer_user.name
-    except:
-        referrer_name = f"ID: {referrer_id}"
-    
-    embed = discord.Embed(
-        title="✅ Реферальный код активирован!",
-        description=f"Вы активировали код **{referrer_name}**!\n\n🎁 **Ваша награда:** +5 пробных запросов\n👑 **Награда пригласившего:** +14 дней премиума",
-        color=discord.Color.green()
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-    
-    try:
-        owner = await bot.fetch_user(int(referrer_id))
-        if owner:
-            await owner.send(f"🎉 Пользователь {interaction.user.mention} активировал ваш реферальный код! Вы получили +14 дней премиума!")
-    except:
-        pass
-
-@bot.tree.command(name="статистика", description="[РЕФ] Ваша реферальная статистика")
-async def ref_stats(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    stats = get_referral_stats(user_id)
-    bonus = get_bonus_requests(user_id)
-    code = get_user_ref_code(user_id)
-    
-    embed = discord.Embed(
-        title="📊 Реферальная статистика",
-        description=f"**Ваш код:** `{code}`\n\n**Приглашено друзей:** {stats['count']}\n**Бонусных запросов получено:** +{bonus}",
-        color=discord.Color.blue()
-    )
-    
-    if stats['invited']:
-        invited_names = []
-        for inv_id in stats['invited'][:10]:
-            try:
-                user = await bot.fetch_user(int(inv_id))
-                invited_names.append(user.name)
-            except:
-                invited_names.append(f"ID: {inv_id}")
-        embed.add_field(name="👥 Приглашённые", value="\n".join(invited_names), inline=False)
-    
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-# ========== ОСТАЛЬНЫЕ КОМАНДЫ ==========
-
-@bot.tree.command(name="ук", description="Поиск по Уголовному кодексу")
-@app_commands.describe(query="Номер статьи или название")
+@bot.tree.command(name="ук", description="Поиск по УК")
+@app_commands.describe(query="Номер или название")
 async def uk_slash(interaction: discord.Interaction, query: str):
     user_id = str(interaction.user.id)
     
     if not is_premium(user_id) and get_remaining_free_requests(user_id) <= 0:
-        embed = discord.Embed(title="⚠️ Лимит исчерпан", description=f"Купите премиум: `/купить`\nИли пригласите друга: `/реф`", color=discord.Color.orange())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message("⚠️ Лимит исчерпан! Купите премиум: `/купить`", ephemeral=True)
         return
     
     await interaction.response.defer()
@@ -737,8 +674,7 @@ async def uk_slash(interaction: discord.Interaction, query: str):
         increment_requests(user_id)
         used = get_user_requests(user_id)
         bonus = get_bonus_requests(user_id)
-        total = 5 + bonus
-        await interaction.followup.send(f"📊 Пробных запросов использовано: {used}/{total}")
+        await interaction.followup.send(f"📊 Использовано: {used}/{5+bonus}")
     
     if len(results) > 1:
         embed = discord.Embed(title=f"🔍 Найдено {len(results)} статей", color=discord.Color.orange())
@@ -754,14 +690,13 @@ async def uk_slash(interaction: discord.Interaction, query: str):
     embed.add_field(name="📝 Наказание", value=law['penalty'], inline=False)
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="пк", description="Поиск по Процессуальному кодексу")
-@app_commands.describe(query="Номер статьи или тема")
+@bot.tree.command(name="пк", description="Поиск по ПК")
+@app_commands.describe(query="Номер или тема")
 async def pk_slash(interaction: discord.Interaction, query: str):
     user_id = str(interaction.user.id)
     
     if not is_premium(user_id) and get_remaining_free_requests(user_id) <= 0:
-        embed = discord.Embed(title="⚠️ Лимит исчерпан", description=f"Купите премиум: `/купить`\nИли пригласите друга: `/реф`", color=discord.Color.orange())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message("⚠️ Лимит исчерпан! Купите премиум: `/купить`", ephemeral=True)
         return
     
     await interaction.response.defer()
@@ -775,8 +710,7 @@ async def pk_slash(interaction: discord.Interaction, query: str):
         increment_requests(user_id)
         used = get_user_requests(user_id)
         bonus = get_bonus_requests(user_id)
-        total = 5 + bonus
-        await interaction.followup.send(f"📊 Пробных запросов использовано: {used}/{total}")
+        await interaction.followup.send(f"📊 Использовано: {used}/{5+bonus}")
     
     if len(results) > 1:
         embed = discord.Embed(title=f"🔍 Найдено {len(results)} статей", color=discord.Color.green())
@@ -793,13 +727,12 @@ async def pk_slash(interaction: discord.Interaction, query: str):
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="вопрос", description="Задать вопрос ИИ-адвокату")
-@app_commands.describe(question="Ваш вопрос по УК или ПК")
+@app_commands.describe(question="Ваш вопрос")
 async def ask_question(interaction: discord.Interaction, question: str):
     user_id = str(interaction.user.id)
     
     if not is_premium(user_id) and get_remaining_free_requests(user_id) <= 0:
-        embed = discord.Embed(title="⚠️ Лимит исчерпан", description=f"Купите премиум: `/купить`\nИли пригласите друга: `/реф`", color=discord.Color.orange())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message("⚠️ Лимит исчерпан! Купите премиум: `/купить`", ephemeral=True)
         return
     
     await interaction.response.defer()
@@ -808,14 +741,13 @@ async def ask_question(interaction: discord.Interaction, question: str):
         increment_requests(user_id)
         used = get_user_requests(user_id)
         bonus = get_bonus_requests(user_id)
-        total = 5 + bonus
-        await interaction.followup.send(f"📊 Пробных запросов использовано: {used}/{total}")
+        await interaction.followup.send(f"📊 Использовано: {used}/{5+bonus}")
     
     answer = await ask_ai(question)
     embed = discord.Embed(title="⚖️ ИИ-адвокат", description=answer, color=discord.Color.purple())
     await interaction.edit_original_response(content=None, embed=embed)
 
-@bot.tree.command(name="разделы_ук", description="Показать разделы УК")
+@bot.tree.command(name="разделы_ук", description="Разделы УК")
 async def uk_sections_cmd(interaction: discord.Interaction):
     embed = discord.Embed(title="📚 Разделы УК", color=discord.Color.red())
     for num, name in uk_sections.items():
@@ -823,7 +755,7 @@ async def uk_sections_cmd(interaction: discord.Interaction):
         embed.add_field(name=f"Глава {num}", value=f"{name}\n└ {count} статей", inline=True)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="разделы_пк", description="Показать разделы ПК")
+@bot.tree.command(name="разделы_пк", description="Разделы ПК")
 async def pk_sections_cmd(interaction: discord.Interaction):
     embed = discord.Embed(title="📚 Разделы ПК", color=discord.Color.green())
     for num, name in pk_sections.items():
@@ -831,46 +763,106 @@ async def pk_sections_cmd(interaction: discord.Interaction):
         embed.add_field(name=f"Раздел {num}", value=f"{name}\n└ {count} статей", inline=True)
     await interaction.response.send_message(embed=embed)
 
+@bot.tree.command(name="реф", description="Реферальная программа")
+async def ref_menu(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    code = get_user_ref_code(user_id)
+    
+    embed = discord.Embed(
+        title="🌟 Реферальная программа",
+        description=(
+            f"**Ваш код:** `{code}`\n\n"
+            "**Награды:**\n"
+            "• Приглашённый: +5 запросов\n"
+            "• Пригласивший: +14 дней премиума\n\n"
+            "**Команды:**\n"
+            "• `/код` — показать код\n"
+            "• `/активировать_код КОД` — активировать код\n"
+            "• `/статистика` — ваша статистика"
+        ),
+        color=discord.Color.gold()
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="код", description="Показать реферальный код")
+async def ref_code(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    code = get_user_ref_code(user_id)
+    await interaction.response.send_message(f"🔑 Ваш код: `{code}`", ephemeral=True)
+
+@bot.tree.command(name="активировать_код", description="Активировать реферальный код друга")
+@app_commands.describe(code="Реферальный код")
+async def ref_activate(interaction: discord.Interaction, code: str):
+    user_id = str(interaction.user.id)
+    
+    own_code = get_user_ref_code(user_id)
+    if code.upper() == own_code:
+        await interaction.response.send_message("❌ Нельзя активировать свой код!", ephemeral=True)
+        return
+    
+    referrer_id = get_user_by_ref_code(code)
+    if not referrer_id:
+        await interaction.response.send_message(f"❌ Код `{code}` не найден!", ephemeral=True)
+        return
+    
+    success = add_referral(user_id, referrer_id)
+    if not success:
+        await interaction.response.send_message("❌ Вы уже активировали чей-то код!", ephemeral=True)
+        return
+    
+    await interaction.response.send_message(f"✅ Код активирован! Вы получили +5 запросов!", ephemeral=True)
+    
+    try:
+        owner = await bot.fetch_user(int(referrer_id))
+        if owner:
+            await owner.send(f"🎉 {interaction.user.mention} активировал ваш код! Вы получили +14 дней премиума!")
+    except:
+        pass
+
+@bot.tree.command(name="статистика", description="Реферальная статистика")
+async def ref_stats(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    stats = get_referral_stats(user_id)
+    bonus = get_bonus_requests(user_id)
+    code = get_user_ref_code(user_id)
+    
+    await interaction.response.send_message(
+        f"📊 **Реферальная статистика**\n🔑 Код: `{code}`\n👥 Приглашено: {stats['count']}\n🎁 Бонусов: +{bonus}",
+        ephemeral=True
+    )
+
 @bot.tree.command(name="поддержка", description="Связаться с поддержкой")
 @app_commands.describe(вопрос="Ваш вопрос")
 async def support_command(interaction: discord.Interaction, вопрос: str):
-    user = interaction.user
-    
     owner = await bot.fetch_user(OWNER_ID)
     if owner:
         embed = discord.Embed(
-            title="🆘 Обращение в поддержку",
-            description=f"**От:** {user.mention}\n**ID:** `{user.id}`\n\n**Вопрос:**\n{вопрос}",
+            title="🆘 Обращение",
+            description=f"**От:** {interaction.user.mention}\n**Вопрос:**\n{вопрос}",
             color=discord.Color.red(),
             timestamp=datetime.now()
         )
         await owner.send(embed=embed)
-    
-    embed = discord.Embed(title="✅ Запрос отправлен!", description="Владелец бота свяжется с вами.", color=discord.Color.green())
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message("✅ Запрос отправлен!", ephemeral=True)
 
-@bot.tree.command(name="справка", description="Показать все команды")
+@bot.tree.command(name="справка", description="Все команды")
 async def help_slash(interaction: discord.Interaction):
     embed = discord.Embed(title="📚 Помощь", color=discord.Color.gold())
-    embed.add_field(name="⚖️ УК", value="`/ук убийство`", inline=False)
-    embed.add_field(name="📜 ПК", value="`/пк задержание`", inline=False)
-    embed.add_field(name="🤖 ИИ", value="`/вопрос Твой вопрос`", inline=False)
-    embed.add_field(name="📚 Разделы", value="`/разделы_ук`, `/разделы_пк`", inline=False)
+    embed.add_field(name="⚖️ УК/ПК", value="`/ук`, `/пк`, `/разделы_ук`, `/разделы_пк`", inline=False)
+    embed.add_field(name="🤖 ИИ", value="`/вопрос`", inline=False)
     embed.add_field(name="💎 Премиум", value="`/купить`, `/активировать`, `/premium_status`", inline=False)
     embed.add_field(name="🌟 Рефералы", value="`/реф`, `/код`, `/активировать_код`, `/статистика`", inline=False)
-    embed.add_field(name="🆘 Поддержка", value="`/поддержка Твой вопрос`", inline=False)
-    embed.add_field(name="👑 Админ", value="`/give_premium`, `/premium_list`, `/premium_stats`", inline=False)
+    embed.add_field(name="🆘 Другое", value="`/поддержка`, `/справка`", inline=False)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="инфо", description="Информация о боте")
+@bot.tree.command(name="инфо", description="О боте")
 async def info_slash(interaction: discord.Interaction):
     stats = get_premium_stats()
     embed = discord.Embed(title="📚 Юридический помощник Majestic RP", color=discord.Color.gold())
-    embed.add_field(name="💎 Бесплатно", value="5 пробных запросов + бонусы от рефералов", inline=False)
-    embed.add_field(name="💰 Премиум", value="30 дней — 55 ₽ | 60 дней — 110 ₽ | 90 дней — 165 ₽ | 180 дней — 330 ₽ | 365 дней — 660 ₽", inline=False)
-    embed.add_field(name="🌟 Рефералы", value="Пригласи друга → +14 дней премиума тебе, +5 запросов другу", inline=False)
-    embed.add_field(name="📊 Статистика", value=f"👥 Пользователей: {stats['total_users']}\n💎 Активных подписок: {stats['active_premium']}", inline=False)
-    embed.add_field(name="🔗 Команды", value="`/справка`", inline=False)
+    embed.add_field(name="💎 Бесплатно", value="5 запросов + бонусы", inline=False)
+    embed.add_field(name="💰 Премиум", value="30д — 55 ₽ | 365д — 660 ₽", inline=False)
+    embed.add_field(name="🌟 Рефералы", value="+14 дней пригласившему, +5 запросов другу", inline=False)
+    embed.add_field(name="📊 Статистика", value=f"👥 {stats['total_users']} | 💎 {stats['active_premium']}", inline=False)
     await interaction.response.send_message(embed=embed)
 
 # Префиксная команда
@@ -879,8 +871,7 @@ async def ask_prefix(ctx, *, question: str):
     user_id = str(ctx.author.id)
     
     if not is_premium(user_id) and get_remaining_free_requests(user_id) <= 0:
-        embed = discord.Embed(title="⚠️ Лимит исчерпан", description="Купите премиум: `/купить`", color=discord.Color.orange())
-        await ctx.send(embed=embed)
+        await ctx.send("⚠️ Лимит исчерпан! Купите премиум: `/купить`")
         return
     
     async with ctx.typing():
