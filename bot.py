@@ -1,14 +1,12 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from discord.ui import View
+from discord.ui import View, Button
 import re
 import os
 import json
 import hashlib
 import asyncio
-import requests
-import socketio
 from datetime import datetime, timedelta
 from difflib import get_close_matches
 from threading import Thread
@@ -50,7 +48,6 @@ def run_web_server():
 # ===== НАСТРОЙКИ =====
 TOKEN = os.environ.get("DISCORD_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-DA_WIDGET_TOKEN = os.environ.get("DA_WIDGET_TOKEN")  # Токен виджета DonationAlerts
 
 if not TOKEN:
     print("❌ ОШИБКА: DISCORD_TOKEN не найден!")
@@ -70,66 +67,6 @@ OWNER_ID = 920268444983775252  # ⚠️ ЗАМЕНИТЕ НА ВАШ DISCORD ID!
 
 def is_owner(interaction: discord.Interaction) -> bool:
     return interaction.user.id == OWNER_ID
-
-# ========== WebSocket ДЛЯ DONATIONALERTS ==========
-sio = socketio.Client()
-
-@sio.event
-def connect():
-    print("✅ WebSocket: Подключено к DonationAlerts")
-    if DA_WIDGET_TOKEN:
-        sio.emit('add-user', {
-            'token': DA_WIDGET_TOKEN,
-            'type': 'minor'
-        })
-        print("✅ WebSocket: Отправлен токен виджета")
-
-@sio.event
-def donation(data):
-    """Обработка нового доната"""
-    try:
-        amount = float(data.get('amount', 0))
-        currency = data.get('currency', 'RUB')
-        username = data.get('username', 'Unknown')
-        message = data.get('message', '')
-        
-        print(f"💰 Получен донат: {amount} {currency} от {username}")
-        print(f"📝 Сообщение: {message}")
-        
-        if amount >= 55:
-            # Ищем Discord ID в сообщении
-            match = re.search(r'!премиум\s+(\d{17,19})', message)
-            if match:
-                discord_id = match.group(1)
-                add_premium(discord_id, 30)
-                print(f"✅ Автоматически выдан премиум {discord_id} (оплачено {amount} {currency})")
-            else:
-                print(f"⚠️ Не найден Discord ID в сообщении: {message}")
-        else:
-            print(f"⚠️ Сумма {amount} меньше минимальной (55)")
-    except Exception as e:
-        print(f"❌ Ошибка обработки доната: {e}")
-
-@sio.event
-def disconnect():
-    print("❌ WebSocket: Отключено от DonationAlerts. Переподключение через 5 секунд...")
-    asyncio.create_task(reconnect_websocket())
-
-async def reconnect_websocket():
-    await asyncio.sleep(5)
-    if DA_WIDGET_TOKEN:
-        try:
-            sio.connect('https://socket.donationalerts.ru:3001')
-        except:
-            print("❌ Ошибка переподключения WebSocket")
-
-def start_websocket():
-    """Запускает WebSocket-соединение в отдельном потоке"""
-    if DA_WIDGET_TOKEN:
-        try:
-            sio.connect('https://socket.donationalerts.ru:3001')
-        except Exception as e:
-            print(f"❌ Ошибка подключения WebSocket: {e}")
 
 # ========== СИСТЕМА ПОДПИСКИ ==========
 DATA_FILE = "premium_users.json"
@@ -340,6 +277,49 @@ def get_referral_stats(user_id: str) -> dict:
             invited.append(referred_id)
     return {"count": len(invited), "invited": invited}
 
+# ========== КНОПКИ ДЛЯ ПОДТВЕРЖДЕНИЯ ОПЛАТЫ ==========
+class PaymentConfirmView(View):
+    def __init__(self, user_id: str, days: int, price: int):
+        super().__init__(timeout=3600)
+        self.user_id = user_id
+        self.days = days
+        self.price = price
+    
+    @discord.ui.button(label="✅ Подтвердить оплату", style=discord.ButtonStyle.green, emoji="✅")
+    async def confirm(self, interaction: discord.Interaction, button: Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для владельца бота!", ephemeral=True)
+            return
+        
+        add_premium(self.user_id, self.days)
+        
+        embed = discord.Embed(
+            title="✅ Премиум активирован!",
+            description=f"Премиум на **{self.days}** дней активирован!",
+            color=discord.Color.green()
+        )
+        await interaction.response.send_message(embed=embed)
+        
+        user = await bot.fetch_user(int(self.user_id))
+        if user:
+            await user.send(f"✅ Ваш премиум на **{self.days}** дней активирован! Спасибо за поддержку!")
+        
+        self.stop()
+    
+    @discord.ui.button(label="❌ Отклонить", style=discord.ButtonStyle.red, emoji="❌")
+    async def reject(self, interaction: discord.Interaction, button: Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для владельца бота!", ephemeral=True)
+            return
+        
+        await interaction.response.send_message(f"❌ Заявка отклонена", ephemeral=False)
+        
+        user = await bot.fetch_user(int(self.user_id))
+        if user:
+            await user.send(f"❌ Ваша заявка на премиум отклонена. Проверьте правильность оплаты или обратитесь в поддержку.")
+        
+        self.stop()
+
 # ========== КНОПКИ ВЫБОРА СРОКА ПОДПИСКИ ==========
 class PremiumDurationView(View):
     def __init__(self, user_id: str):
@@ -347,45 +327,82 @@ class PremiumDurationView(View):
         self.user_id = user_id
     
     @discord.ui.button(label="30 дней - 55 ₽", style=discord.ButtonStyle.green, emoji="💎", row=0)
-    async def premium_30(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def premium_30(self, interaction: discord.Interaction, button: Button):
         await self.process_payment(interaction, 30, 55)
     
     @discord.ui.button(label="60 дней - 110 ₽", style=discord.ButtonStyle.blurple, emoji="💎", row=0)
-    async def premium_60(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def premium_60(self, interaction: discord.Interaction, button: Button):
         await self.process_payment(interaction, 60, 110)
     
     @discord.ui.button(label="90 дней - 165 ₽", style=discord.ButtonStyle.blurple, emoji="💎", row=1)
-    async def premium_90(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def premium_90(self, interaction: discord.Interaction, button: Button):
         await self.process_payment(interaction, 90, 165)
     
     @discord.ui.button(label="180 дней - 330 ₽", style=discord.ButtonStyle.blurple, emoji="💎", row=1)
-    async def premium_180(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def premium_180(self, interaction: discord.Interaction, button: Button):
         await self.process_payment(interaction, 180, 330)
     
     @discord.ui.button(label="365 дней - 660 ₽", style=discord.ButtonStyle.blurple, emoji="👑", row=2)
-    async def premium_365(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def premium_365(self, interaction: discord.Interaction, button: Button):
         await self.process_payment(interaction, 365, 660)
     
     async def process_payment(self, interaction: discord.Interaction, days: int, price: int):
         user_id = str(interaction.user.id)
+        
         embed = discord.Embed(
-            title=f"💎 Подписка на {days} дней — {price} ₽",
+            title=f"💎 Оплата подписки на {days} дней",
             description=(
-                f"🔥 **Что даёт премиум:**\n"
-                f"• Безлимитные запросы\n"
-                f"• Приоритетная поддержка\n\n"
-                f"💳 **Как оплатить:**\n"
-                f"1. Перейдите по ссылке: [DonationAlerts](https://www.donationalerts.com/r/wilka_wilkovich)\n"
-                f"2. Выберите сумму **{price} ₽**\n"
-                f"3. **В комментарии укажите ваш Discord ID:**\n"
-                f"   `!премиум {user_id} {days}`\n"
-                f"4. После оплаты бот **автоматически** выдаст премиум!\n\n"
-                f"📌 **Проверить статус:** `/premium_status`\n"
-                f"🌟 **Рефералы:** `/реф`"
+                f"Сумма: **{price} ₽**\n\n"
+                f"**Как оплатить:**\n"
+                f"1. Переведите **{price} ₽** на карту: **[ваша карта]**\n"
+                f"2. Напишите боту в **личные сообщения** и отправьте скриншот оплаты\n"
+                f"3. Дождитесь подтверждения\n\n"
+                f"**Ваш Discord ID:** `{user_id}`"
             ),
             color=discord.Color.gold()
         )
         await interaction.response.edit_message(content=None, embed=embed, view=None)
+
+# ========== ОБРАБОТКА ЛИЧНЫХ СООБЩЕНИЙ ==========
+@bot.event
+async def on_message(message):
+    if message.author == bot.user:
+        return
+    
+    if isinstance(message.channel, discord.DMChannel):
+        if message.attachments:
+            user_id = str(message.author.id)
+            days = 30
+            price = 55
+            
+            embed = discord.Embed(
+                title="🆕 Новая заявка на премиум!",
+                description=(
+                    f"**Пользователь:** {message.author.mention}\n"
+                    f"**Discord ID:** `{user_id}`\n"
+                    f"**Срок:** {days} дней\n"
+                    f"**Сумма:** {price} ₽"
+                ),
+                color=discord.Color.orange(),
+                timestamp=datetime.now()
+            )
+            
+            view = PaymentConfirmView(user_id, days, price)
+            
+            owner = await bot.fetch_user(OWNER_ID)
+            if owner:
+                await owner.send(embed=embed, view=view)
+                for attachment in message.attachments:
+                    await owner.send(f"📸 Скриншот: {attachment.url}")
+            
+            await message.reply(
+                "✅ **Скриншот отправлен!**\n"
+                "Владелец бота проверит оплату и активирует премиум.\n"
+                "Статус: `/premium_status`"
+            )
+            return
+    
+    await bot.process_commands(message)
 
 # ========== БАЗА УК ==========
 uk_sections = {
@@ -520,15 +537,6 @@ async def on_ready():
     print(f"💎 Бесплатно: 5 + бонусы | Премиум: от 55 ₽")
     print(f"📊 Статистика: {stats['total_users']} пользователей, {stats['active_premium']} активных")
     
-    if DA_WIDGET_TOKEN:
-        print(f"🔗 DonationAlerts WebSocket настроен (автоматическая выдача)")
-        # Запускаем WebSocket в отдельном потоке
-        ws_thread = Thread(target=start_websocket, daemon=True)
-        ws_thread.start()
-    else:
-        print(f"⚠️ DonationAlerts WebSocket не настроен (ручная выдача)")
-        print(f"   Добавьте переменную DA_WIDGET_TOKEN в Render")
-    
     try:
         synced = await bot.tree.sync()
         print(f"🔗 Синхронизировано {len(synced)} слэш-команд")
@@ -558,34 +566,6 @@ async def buy_premium(interaction: discord.Interaction):
     )
     view = PremiumDurationView(user_id)
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-
-@bot.tree.command(name="активировать", description="Активировать премиум после оплаты")
-@app_commands.describe(id="Ваш Discord ID", days="Количество дней (30, 60, 90, 180, 365)")
-async def activate_premium(interaction: discord.Interaction, id: str, days: int = 30):
-    user_id = str(interaction.user.id)
-    
-    if id != user_id:
-        await interaction.response.send_message("❌ Вы указали чужой ID!", ephemeral=True)
-        return
-    
-    valid_days = [30, 60, 90, 180, 365]
-    if days not in valid_days:
-        await interaction.response.send_message(f"❌ Выберите: {', '.join(map(str, valid_days))} дней", ephemeral=True)
-        return
-    
-    price = days * 55 // 30
-    owner = await bot.fetch_user(OWNER_ID)
-    if owner:
-        embed = discord.Embed(
-            title="🆕 Запрос на активацию!",
-            description=f"**Пользователь:** {interaction.user.mention}\n**Срок:** {days} дней\n**Сумма:** {price} ₽",
-            color=discord.Color.orange(),
-            timestamp=datetime.now()
-        )
-        await owner.send(embed=embed)
-        await owner.send(f"✅ Выдайте: `/give_premium {user_id} {days}`")
-    
-    await interaction.response.send_message(f"✅ Запрос на {days} дней отправлен!", ephemeral=True)
 
 @bot.tree.command(name="give_premium", description="[АДМИН] Выдать премиум")
 @app_commands.describe(user="Пользователь", days="Количество дней")
@@ -850,9 +830,10 @@ async def help_slash(interaction: discord.Interaction):
     embed = discord.Embed(title="📚 Помощь", color=discord.Color.gold())
     embed.add_field(name="⚖️ УК/ПК", value="`/ук`, `/пк`, `/разделы_ук`, `/разделы_пк`", inline=False)
     embed.add_field(name="🤖 ИИ", value="`/вопрос`", inline=False)
-    embed.add_field(name="💎 Премиум", value="`/купить`, `/активировать`, `/premium_status`", inline=False)
+    embed.add_field(name="💎 Премиум", value="`/купить`, `/premium_status`", inline=False)
     embed.add_field(name="🌟 Рефералы", value="`/реф`, `/код`, `/активировать_код`, `/статистика`", inline=False)
     embed.add_field(name="🆘 Другое", value="`/поддержка`, `/справка`", inline=False)
+    embed.add_field(name="👑 Админ", value="`/give_premium`, `/premium_list`, `/premium_stats`", inline=False)
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="инфо", description="О боте")
@@ -865,7 +846,6 @@ async def info_slash(interaction: discord.Interaction):
     embed.add_field(name="📊 Статистика", value=f"👥 {stats['total_users']} | 💎 {stats['active_premium']}", inline=False)
     await interaction.response.send_message(embed=embed)
 
-# Префиксная команда
 @bot.command(name="вопрос")
 async def ask_prefix(ctx, *, question: str):
     user_id = str(ctx.author.id)
