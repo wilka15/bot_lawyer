@@ -5,6 +5,7 @@ from discord.ui import View
 import re
 import os
 import json
+import hashlib
 import asyncio
 from datetime import datetime, timedelta
 from difflib import get_close_matches
@@ -40,7 +41,7 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ===== ID ВЛАДЕЛЬЦА БОТА =====
-OWNER_ID = 920268444983775252  # ⚠️ ЗАМЕНИТЕ НА ВАШ DISCORD ID!
+OWNER_ID = 920268444983775252  
 
 def is_owner(interaction: discord.Interaction) -> bool:
     return interaction.user.id == OWNER_ID
@@ -49,19 +50,16 @@ def is_owner(interaction: discord.Interaction) -> bool:
 DATA_FILE = "premium_users.json"
 
 def load_data():
-    """Загружает данные из файла (память после перезапуска)"""
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     return {}
 
 def save_data(data):
-    """Сохраняет данные в файл"""
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 def cleanup_expired():
-    """Удаляет истекшие подписки (запускается при проверке)"""
     data = load_data()
     changed = False
     now = datetime.now()
@@ -83,7 +81,7 @@ def get_user_requests(user_id: str) -> int:
     current_month = datetime.now().strftime("%Y-%m")
     
     if user_id not in data:
-        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None}
+        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None, "bonus_requests": 0}
     
     if data[user_id].get("month") != current_month:
         data[user_id]["requests"] = 0
@@ -97,7 +95,7 @@ def increment_requests(user_id: str) -> int:
     current_month = datetime.now().strftime("%Y-%m")
     
     if user_id not in data:
-        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None}
+        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None, "bonus_requests": 0}
     
     if data[user_id].get("month") != current_month:
         data[user_id]["requests"] = 0
@@ -108,7 +106,7 @@ def increment_requests(user_id: str) -> int:
     return data[user_id]["requests"]
 
 def is_premium(user_id: str) -> bool:
-    cleanup_expired()  # Проверяем истекшие подписки при каждом запросе
+    cleanup_expired()
     data = load_data()
     if user_id not in data:
         return False
@@ -121,12 +119,11 @@ def is_premium(user_id: str) -> bool:
     return expire_date > datetime.now()
 
 def add_premium(user_id: str, days: int):
-    """Добавляет или продлевает подписку (сохраняется в файл)"""
     data = load_data()
     current_month = datetime.now().strftime("%Y-%m")
     
     if user_id not in data:
-        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None}
+        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None, "bonus_requests": 0}
     
     current_expiry = data[user_id].get("premium_until")
     if current_expiry:
@@ -145,12 +142,28 @@ def get_premium_expiry(user_id: str) -> str:
         return None
     return data[user_id].get("premium_until")
 
+def get_bonus_requests(user_id: str) -> int:
+    data = load_data()
+    if user_id not in data:
+        return 0
+    return data[user_id].get("bonus_requests", 0)
+
+def add_bonus_requests(user_id: str, amount: int):
+    data = load_data()
+    current_month = datetime.now().strftime("%Y-%m")
+    
+    if user_id not in data:
+        data[user_id] = {"requests": 0, "month": current_month, "premium_until": None, "bonus_requests": 0}
+    
+    data[user_id]["bonus_requests"] = data[user_id].get("bonus_requests", 0) + amount
+    save_data(data)
+
 def get_remaining_free_requests(user_id: str) -> int:
     used = get_user_requests(user_id)
-    return max(0, 5 - used)
+    bonus = get_bonus_requests(user_id)
+    return max(0, (5 + bonus) - used)
 
 def get_all_premium_users() -> list:
-    """Возвращает список всех пользователей с АКТИВНОЙ подпиской"""
     cleanup_expired()
     data = load_data()
     premium_list = []
@@ -167,21 +180,17 @@ def get_all_premium_users() -> list:
                     "expires_date": expire_date
                 })
     
-    # Сортируем по дате истечения (скоро истекающие — первые)
     premium_list.sort(key=lambda x: x["expires_date"])
     return premium_list
 
 def get_premium_stats() -> dict:
-    """Возвращает статистику по подпискам"""
     data = load_data()
     total_users = len(data)
     active_premium = 0
-    total_requests = 0
     current_month = datetime.now().strftime("%Y-%m")
     now = datetime.now()
     
     for user_id, info in data.items():
-        total_requests += info.get("requests", 0)
         premium_until = info.get("premium_until")
         if premium_until:
             expire_date = datetime.fromisoformat(premium_until)
@@ -191,9 +200,67 @@ def get_premium_stats() -> dict:
     return {
         "total_users": total_users,
         "active_premium": active_premium,
-        "total_requests_month": total_requests,
         "month": current_month
     }
+
+# ========== РЕФЕРАЛЬНАЯ СИСТЕМА ==========
+REF_FILE = "referrals.json"
+
+def load_ref_data():
+    if os.path.exists(REF_FILE):
+        with open(REF_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {"codes": {}, "used": {}}
+
+def save_ref_data(data):
+    with open(REF_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+def generate_ref_code(user_id: str) -> str:
+    hash_obj = hashlib.md5(f"{user_id}{OWNER_ID}".encode())
+    return hash_obj.hexdigest()[:8].upper()
+
+def get_user_ref_code(user_id: str) -> str:
+    data = load_ref_data()
+    
+    if user_id not in data["codes"]:
+        code = generate_ref_code(user_id)
+        data["codes"][user_id] = code
+        save_ref_data(data)
+    
+    return data["codes"][user_id]
+
+def get_user_by_ref_code(code: str) -> str:
+    data = load_ref_data()
+    for user_id, user_code in data["codes"].items():
+        if user_code == code.upper():
+            return user_id
+    return None
+
+def add_referral(referred_id: str, referrer_id: str) -> bool:
+    data = load_ref_data()
+    
+    if referred_id in data["used"]:
+        return False
+    
+    data["used"][referred_id] = {
+        "referrer": referrer_id,
+        "date": datetime.now().isoformat()
+    }
+    save_ref_data(data)
+    
+    add_bonus_requests(referred_id, 5)
+    add_premium(referrer_id, 14)
+    
+    return True
+
+def get_referral_stats(user_id: str) -> dict:
+    data = load_ref_data()
+    invited = []
+    for referred_id, info in data["used"].items():
+        if info["referrer"] == user_id:
+            invited.append(referred_id)
+    return {"count": len(invited), "invited": invited}
 
 # ========== КНОПКИ ВЫБОРА СРОКА ПОДПИСКИ ==========
 class PremiumDurationView(View):
@@ -231,7 +298,7 @@ class PremiumDurationView(View):
                 f"• Безлимитные запросы к боту\n"
                 f"• Приоритетная поддержка\n\n"
                 f"💳 **Как оплатить:**\n"
-                f"1. Переведите **{price} ₽** на карту [2200 2492 0252 2980]\n"
+                f"1. Переведите **{price} ₽** на карту [ 2200 2492 0252 2980 ]\n"
                 f"2. **В комментарии к переводу укажите:**\n"
                 f"   `!премиум {user_id} {days}`\n"
                 f"3. После оплаты напишите боту в ЛС:\n"
@@ -367,7 +434,6 @@ def smart_search(query: str, database: list):
 # ========== СОБЫТИЕ ==========
 @bot.event
 async def on_ready():
-    # Очищаем истекшие подписки при запуске
     cleanup_expired()
     
     stats = get_premium_stats()
@@ -375,16 +441,9 @@ async def on_ready():
     
     print(f"✅ Бот {bot.user} готов!")
     print(f"📜 УК: {len(uk_laws)} статей | ПК: {len(pk_laws)} статей")
-    print(f"💎 Бесплатно: 5 пробных запросов в месяц | Премиум: от 55 ₽")
+    print(f"💎 Бесплатно: 5 пробных запросов + бонусы от рефералов | Премиум: от 55 ₽")
     print(f"👑 Владелец бота: {OWNER_ID}")
     print(f"📊 Статистика: {stats['total_users']} пользователей, {stats['active_premium']} активных подписок")
-    print(f"💎 Активных премиум-подписок: {len(premium_users)}")
-    
-    for pu in premium_users[:5]:
-        print(f"   - {pu['id']} до {pu['expires'][:10]}")
-    
-    if len(premium_users) > 5:
-        print(f"   ... и ещё {len(premium_users) - 5}")
     
     try:
         synced = await bot.tree.sync()
@@ -410,16 +469,13 @@ async def buy_premium(interaction: discord.Interaction):
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "**🖥️ На компьютере:**\n"
             "1. Нажмите на шестерёнку (⚙️) рядом с вашим именем\n"
-            "2. Выберите **«Дополнительно»** (Advanced)\n"
-            "3. Включите **«Режим разработчика»** (Developer Mode)\n"
-            "4. Нажмите правой кнопкой мыши по своему имени\n"
-            "5. Выберите **«Копировать ID»**\n\n"
+            "2. Выберите **«Дополнительно»**\n"
+            "3. Включите **«Режим разработчика»**\n"
+            "4. ПКМ по своему имени → **«Копировать ID»**\n\n"
             "**📱 На телефоне:**\n"
-            "1. Нажмите на свою аватарку в правом нижнем углу\n"
-            "2. Выберите **«Внешний вид»** (Appearance)\n"
-            "3. Включите **«Режим разработчика»** (Developer Mode)\n"
-            "4. Удерживайте палец на своём имени\n"
-            "5. Выберите **«Копировать ID»**\n\n"
+            "1. Нажмите на аватарку → **«Внешний вид»**\n"
+            "2. Включите **«Режим разработчика»**\n"
+            "3. Удерживайте палец на своём имени → **«Копировать ID»**\n\n"
             "**✅ Ваш ID:** `" + user_id + "`\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         ),
@@ -475,57 +531,40 @@ async def give_premium(interaction: discord.Interaction, user: discord.User, day
     new_expiry = add_premium(str(user.id), days)
     embed = discord.Embed(
         title="✅ Премиум выдан!",
-        description=f"{user.mention} получил премиум на **{days}** дней.\n📅 Действует до: {new_expiry.strftime('%Y-%m-%d')}",
+        description=f"{user.mention} получил премиум на **{days}** дней.\n📅 Действует до: {new_expiry.strftime('%d.%m.%Y')}",
         color=discord.Color.green()
     )
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="premium_list", description="[АДМИН] Показать список активных премиум-подписок")
+@bot.tree.command(name="premium_list", description="[АДМИН] Показать список активных подписок")
 async def premium_list(interaction: discord.Interaction):
     if not (is_owner(interaction) or interaction.user.guild_permissions.administrator):
-        embed = discord.Embed(title="❌ Нет прав!", description="Команда только для администраторов.", color=discord.Color.red())
+        embed = discord.Embed(title="❌ Нет прав!", color=discord.Color.red())
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     
     premium_users = get_all_premium_users()
     
     if not premium_users:
-        embed = discord.Embed(
-            title="💎 Активные премиум-подписки",
-            description="Нет активных подписок.",
-            color=discord.Color.orange()
-        )
+        embed = discord.Embed(title="💎 Активные подписки", description="Нет активных подписок.", color=discord.Color.orange())
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     
-    embed = discord.Embed(
-        title=f"💎 Активные премиум-подписки ({len(premium_users)})",
-        color=discord.Color.green(),
-        timestamp=datetime.now()
-    )
+    embed = discord.Embed(title=f"💎 Активные подписки ({len(premium_users)})", color=discord.Color.green(), timestamp=datetime.now())
     
-    for pu in premium_users[:20]:  # Максимум 20 записей в одном сообщении
+    for pu in premium_users[:20]:
         try:
             user = await bot.fetch_user(int(pu["id"]))
             name = user.name
         except:
             name = f"ID: {pu['id']}"
         
-        expire_date = pu["expires_date"]
-        days_left = (expire_date - datetime.now()).days
-        
-        embed.add_field(
-            name=f"👤 {name}",
-            value=f"📅 До: {expire_date.strftime('%d.%m.%Y')}\n⏰ Осталось: {days_left} дней\n🆔 `{pu['id']}`",
-            inline=False
-        )
-    
-    if len(premium_users) > 20:
-        embed.set_footer(text=f"И ещё {len(premium_users) - 20} подписок... Используйте /premium_stats для полной статистики")
+        days_left = (pu["expires_date"] - datetime.now()).days
+        embed.add_field(name=f"👤 {name}", value=f"📅 До: {pu['expires_date'].strftime('%d.%m.%Y')}\n⏰ Осталось: {days_left} дней\n🆔 `{pu['id']}`", inline=False)
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="premium_stats", description="[АДМИН] Показать статистику по подпискам")
+@bot.tree.command(name="premium_stats", description="[АДМИН] Статистика подписок")
 async def premium_stats(interaction: discord.Interaction):
     if not (is_owner(interaction) or interaction.user.guild_permissions.administrator):
         embed = discord.Embed(title="❌ Нет прав!", color=discord.Color.red())
@@ -535,22 +574,9 @@ async def premium_stats(interaction: discord.Interaction):
     stats = get_premium_stats()
     premium_users = get_all_premium_users()
     
-    # Считаем общее количество использованных запросов за месяц
-    total_requests = 0
-    data = load_data()
-    current_month = datetime.now().strftime("%Y-%m")
-    for user_id, info in data.items():
-        if info.get("month") == current_month:
-            total_requests += info.get("requests", 0)
-    
-    embed = discord.Embed(
-        title="📊 Статистика подписок",
-        color=discord.Color.blue(),
-        timestamp=datetime.now()
-    )
+    embed = discord.Embed(title="📊 Статистика подписок", color=discord.Color.blue(), timestamp=datetime.now())
     embed.add_field(name="👥 Всего пользователей", value=str(stats['total_users']), inline=True)
     embed.add_field(name="💎 Активных подписок", value=str(stats['active_premium']), inline=True)
-    embed.add_field(name="📝 Запросов в месяце", value=str(total_requests), inline=True)
     embed.add_field(name="📅 Текущий месяц", value=stats['month'], inline=True)
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -560,7 +586,9 @@ async def premium_status(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
     premium = is_premium(user_id)
     used = get_user_requests(user_id)
-    remaining = 5 - used
+    bonus = get_bonus_requests(user_id)
+    total_free = 5 + bonus
+    remaining = total_free - used
     
     if premium:
         expire = get_premium_expiry(user_id)
@@ -568,16 +596,125 @@ async def premium_status(interaction: discord.Interaction):
         days_left = (expire_date - datetime.now()).days
         embed = discord.Embed(
             title="💎 Статус подписки",
-            description=f"✅ Премиум **активен**\n📅 Действует до: {expire_date.strftime('%d.%m.%Y')}\n⏰ Осталось: {days_left} дней\n📊 Пробных запросов: {used}/5",
+            description=f"✅ Премиум **активен**\n📅 Действует до: {expire_date.strftime('%d.%m.%Y')}\n⏰ Осталось: {days_left} дней\n📊 Пробных запросов: {used}/{total_free}",
             color=discord.Color.green()
         )
     else:
         embed = discord.Embed(
             title="💎 Статус подписки",
-            description=f"❌ Премиум **не активен**\n\n📊 Пробных запросов: {used}/5 осталось {remaining}\n💰 Премиум: `/купить`",
+            description=f"❌ Премиум **не активен**\n\n📊 Пробных запросов: {used}/{total_free} осталось {remaining}\n🎁 Бонусных от рефералов: +{bonus}\n💰 Премиум: `/купить`\n🌟 Рефералы: `/реф`",
             color=discord.Color.orange()
         )
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ========== РЕФЕРАЛЬНЫЕ КОМАНДЫ ==========
+
+@bot.tree.command(name="реф", description="Реферальная программа")
+async def ref_menu(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    code = get_user_ref_code(user_id)
+    
+    embed = discord.Embed(
+        title="🌟 Реферальная программа",
+        description=(
+            f"**Ваш код:** `{code}`\n\n"
+            "**Как это работает:**\n"
+            "1. Поделитесь кодом с друзьями\n"
+            "2. Друг активирует код: `/активировать_код КОД`\n\n"
+            "**Награды:**\n"
+            "🎁 **Приглашённый:** +5 пробных запросов\n"
+            "👑 **Пригласивший:** +14 дней премиума\n\n"
+            "**Команды:**\n"
+            "• `/код` — показать свой код\n"
+            "• `/активировать_код КОД` — активировать код друга\n"
+            "• `/статистика` — ваша статистика"
+        ),
+        color=discord.Color.gold()
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="код", description="[РЕФ] Показать свой реферальный код")
+async def ref_code(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    code = get_user_ref_code(user_id)
+    
+    embed = discord.Embed(
+        title="🔑 Ваш реферальный код",
+        description=f"`{code}`\n\nПоделитесь кодом с друзьями!\n\nКогда друг активирует код через `/активировать_код {code}`, вы получите **+14 дней премиума**, а друг **+5 пробных запросов**.",
+        color=discord.Color.blue()
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="активировать_код", description="[РЕФ] Активировать реферальный код друга")
+@app_commands.describe(code="Реферальный код (8 символов)")
+async def ref_activate(interaction: discord.Interaction, code: str):
+    user_id = str(interaction.user.id)
+    
+    own_code = get_user_ref_code(user_id)
+    if code.upper() == own_code:
+        embed = discord.Embed(title="❌ Ошибка!", description="Нельзя активировать свой собственный код.", color=discord.Color.red())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    referrer_id = get_user_by_ref_code(code)
+    if not referrer_id:
+        embed = discord.Embed(title="❌ Код не найден!", description=f"Код `{code}` не существует.", color=discord.Color.red())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    success = add_referral(user_id, referrer_id)
+    
+    if not success:
+        embed = discord.Embed(title="❌ Ошибка!", description="Вы уже активировали чей-то код ранее.", color=discord.Color.red())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    try:
+        referrer_user = await bot.fetch_user(int(referrer_id))
+        referrer_name = referrer_user.name
+    except:
+        referrer_name = f"ID: {referrer_id}"
+    
+    embed = discord.Embed(
+        title="✅ Реферальный код активирован!",
+        description=f"Вы активировали код **{referrer_name}**!\n\n🎁 **Ваша награда:** +5 пробных запросов\n👑 **Награда пригласившего:** +14 дней премиума",
+        color=discord.Color.green()
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    try:
+        owner = await bot.fetch_user(int(referrer_id))
+        if owner:
+            await owner.send(f"🎉 Пользователь {interaction.user.mention} активировал ваш реферальный код! Вы получили +14 дней премиума!")
+    except:
+        pass
+
+@bot.tree.command(name="статистика", description="[РЕФ] Ваша реферальная статистика")
+async def ref_stats(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    stats = get_referral_stats(user_id)
+    bonus = get_bonus_requests(user_id)
+    code = get_user_ref_code(user_id)
+    
+    embed = discord.Embed(
+        title="📊 Реферальная статистика",
+        description=f"**Ваш код:** `{code}`\n\n**Приглашено друзей:** {stats['count']}\n**Бонусных запросов получено:** +{bonus}",
+        color=discord.Color.blue()
+    )
+    
+    if stats['invited']:
+        invited_names = []
+        for inv_id in stats['invited'][:10]:
+            try:
+                user = await bot.fetch_user(int(inv_id))
+                invited_names.append(user.name)
+            except:
+                invited_names.append(f"ID: {inv_id}")
+        embed.add_field(name="👥 Приглашённые", value="\n".join(invited_names), inline=False)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ========== ОСТАЛЬНЫЕ КОМАНДЫ ==========
 
 @bot.tree.command(name="ук", description="Поиск по Уголовному кодексу")
 @app_commands.describe(query="Номер статьи или название")
@@ -585,7 +722,7 @@ async def uk_slash(interaction: discord.Interaction, query: str):
     user_id = str(interaction.user.id)
     
     if not is_premium(user_id) and get_remaining_free_requests(user_id) <= 0:
-        embed = discord.Embed(title="⚠️ Лимит исчерпан", description="Купите премиум: `/купить`", color=discord.Color.orange())
+        embed = discord.Embed(title="⚠️ Лимит исчерпан", description=f"Купите премиум: `/купить`\nИли пригласите друга: `/реф`", color=discord.Color.orange())
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     
@@ -599,7 +736,9 @@ async def uk_slash(interaction: discord.Interaction, query: str):
     if not is_premium(user_id):
         increment_requests(user_id)
         used = get_user_requests(user_id)
-        await interaction.followup.send(f"📊 Пробных запросов использовано: {used}/5")
+        bonus = get_bonus_requests(user_id)
+        total = 5 + bonus
+        await interaction.followup.send(f"📊 Пробных запросов использовано: {used}/{total}")
     
     if len(results) > 1:
         embed = discord.Embed(title=f"🔍 Найдено {len(results)} статей", color=discord.Color.orange())
@@ -621,7 +760,7 @@ async def pk_slash(interaction: discord.Interaction, query: str):
     user_id = str(interaction.user.id)
     
     if not is_premium(user_id) and get_remaining_free_requests(user_id) <= 0:
-        embed = discord.Embed(title="⚠️ Лимит исчерпан", description="Купите премиум: `/купить`", color=discord.Color.orange())
+        embed = discord.Embed(title="⚠️ Лимит исчерпан", description=f"Купите премиум: `/купить`\nИли пригласите друга: `/реф`", color=discord.Color.orange())
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     
@@ -635,7 +774,9 @@ async def pk_slash(interaction: discord.Interaction, query: str):
     if not is_premium(user_id):
         increment_requests(user_id)
         used = get_user_requests(user_id)
-        await interaction.followup.send(f"📊 Пробных запросов использовано: {used}/5")
+        bonus = get_bonus_requests(user_id)
+        total = 5 + bonus
+        await interaction.followup.send(f"📊 Пробных запросов использовано: {used}/{total}")
     
     if len(results) > 1:
         embed = discord.Embed(title=f"🔍 Найдено {len(results)} статей", color=discord.Color.green())
@@ -657,7 +798,7 @@ async def ask_question(interaction: discord.Interaction, question: str):
     user_id = str(interaction.user.id)
     
     if not is_premium(user_id) and get_remaining_free_requests(user_id) <= 0:
-        embed = discord.Embed(title="⚠️ Лимит исчерпан", description="Купите премиум: `/купить`", color=discord.Color.orange())
+        embed = discord.Embed(title="⚠️ Лимит исчерпан", description=f"Купите премиум: `/купить`\nИли пригласите друга: `/реф`", color=discord.Color.orange())
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     
@@ -666,7 +807,9 @@ async def ask_question(interaction: discord.Interaction, question: str):
     if not is_premium(user_id):
         increment_requests(user_id)
         used = get_user_requests(user_id)
-        await interaction.followup.send(f"📊 Пробных запросов использовано: {used}/5")
+        bonus = get_bonus_requests(user_id)
+        total = 5 + bonus
+        await interaction.followup.send(f"📊 Пробных запросов использовано: {used}/{total}")
     
     answer = await ask_ai(question)
     embed = discord.Embed(title="⚖️ ИИ-адвокат", description=answer, color=discord.Color.purple())
@@ -713,19 +856,21 @@ async def help_slash(interaction: discord.Interaction):
     embed.add_field(name="📜 ПК", value="`/пк задержание`", inline=False)
     embed.add_field(name="🤖 ИИ", value="`/вопрос Твой вопрос`", inline=False)
     embed.add_field(name="📚 Разделы", value="`/разделы_ук`, `/разделы_пк`", inline=False)
-    embed.add_field(name="💎 Подписка", value="`/купить`, `/активировать`, `/premium_status`, `/инфо`", inline=False)
-    embed.add_field(name="📊 Админ", value="`/premium_list`, `/premium_stats`, `/give_premium`", inline=False)
+    embed.add_field(name="💎 Премиум", value="`/купить`, `/активировать`, `/premium_status`", inline=False)
+    embed.add_field(name="🌟 Рефералы", value="`/реф`, `/код`, `/активировать_код`, `/статистика`", inline=False)
     embed.add_field(name="🆘 Поддержка", value="`/поддержка Твой вопрос`", inline=False)
+    embed.add_field(name="👑 Админ", value="`/give_premium`, `/premium_list`, `/premium_stats`", inline=False)
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="инфо", description="Информация о боте")
 async def info_slash(interaction: discord.Interaction):
     stats = get_premium_stats()
     embed = discord.Embed(title="📚 Юридический помощник Majestic RP", color=discord.Color.gold())
-    embed.add_field(name="💎 Бесплатно", value="5 пробных запросов в месяц", inline=False)
+    embed.add_field(name="💎 Бесплатно", value="5 пробных запросов + бонусы от рефералов", inline=False)
     embed.add_field(name="💰 Премиум", value="30 дней — 55 ₽ | 60 дней — 110 ₽ | 90 дней — 165 ₽ | 180 дней — 330 ₽ | 365 дней — 660 ₽", inline=False)
+    embed.add_field(name="🌟 Рефералы", value="Пригласи друга → +14 дней премиума тебе, +5 запросов другу", inline=False)
     embed.add_field(name="📊 Статистика", value=f"👥 Пользователей: {stats['total_users']}\n💎 Активных подписок: {stats['active_premium']}", inline=False)
-    embed.add_field(name="🔗 Команды", value="`/купить`, `/premium_status`, `/справка`", inline=False)
+    embed.add_field(name="🔗 Команды", value="`/справка`", inline=False)
     await interaction.response.send_message(embed=embed)
 
 # Префиксная команда
